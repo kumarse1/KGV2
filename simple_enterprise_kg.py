@@ -160,7 +160,7 @@ class SimpleKnowledgeGraph:
                 self.graph.add_edge(rel['source'], rel['target'], **rel)
     
     def generate_pyvis_html(self):
-        """Generate Pyvis visualization"""
+        """Generate Pyvis visualization - Windows compatible"""
         net = Network(height="600px", width="100%", bgcolor="#222222", font_color="white", directed=True)
         
         # Colors for different entity types
@@ -193,14 +193,67 @@ class SimpleKnowledgeGraph:
                 arrows="to"
             )
         
-        # Generate HTML
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as tmp_file:
-            net.save_graph(tmp_file.name)
-            with open(tmp_file.name, 'r') as f:
+        # Generate HTML without file operations - Windows compatible
+        try:
+            # Create a unique filename
+            import uuid
+            temp_filename = f"temp_graph_{uuid.uuid4().hex[:8]}.html"
+            
+            # Save to temp file
+            net.save_graph(temp_filename)
+            
+            # Read content immediately
+            with open(temp_filename, 'r', encoding='utf-8') as f:
                 html_content = f.read()
-            os.unlink(tmp_file.name)
+            
+            # Clean up temp file
+            try:
+                os.remove(temp_filename)
+            except:
+                pass  # Ignore cleanup errors
+            
+            return html_content
+            
+        except Exception as e:
+            # Fallback: generate simple HTML if Pyvis fails
+            return self._generate_fallback_html()
+    
+    def _generate_fallback_html(self):
+        """Generate simple HTML if Pyvis fails"""
+        html = """
+        <div style="background: #222; color: white; padding: 20px; border-radius: 8px;">
+            <h3>📊 Knowledge Graph Generated</h3>
+            <p>Pyvis visualization temporarily unavailable. Here's your graph data:</p>
+            <div style="background: #333; padding: 15px; border-radius: 4px; margin: 10px 0;">
+        """
         
-        return html_content
+        # Show entities
+        html += f"<strong>🏷️ Entities ({len(self.entities)}):</strong><br>"
+        for entity_id, entity in list(self.entities.items())[:10]:  # Show first 10
+            html += f"• {entity.get('label', entity_id)} ({entity.get('type', 'unknown')})<br>"
+        
+        if len(self.entities) > 10:
+            html += f"... and {len(self.entities) - 10} more entities<br>"
+        
+        # Show relationships
+        relationships = list(self.graph.edges(data=True))
+        html += f"<br><strong>🔗 Relationships ({len(relationships)}):</strong><br>"
+        for source, target, data in relationships[:10]:  # Show first 10
+            source_label = self.entities.get(source, {}).get('label', source)
+            target_label = self.entities.get(target, {}).get('label', target)
+            rel_type = data.get('type', 'connected')
+            html += f"• {source_label} --{rel_type}--> {target_label}<br>"
+        
+        if len(relationships) > 10:
+            html += f"... and {len(relationships) - 10} more relationships<br>"
+        
+        html += """
+            </div>
+            <p>💡 Your knowledge graph is working! Try the Q&A section below.</p>
+        </div>
+        """
+        
+        return html
     
     def query(self, question):
         """Simple Q&A"""
