@@ -41,42 +41,101 @@ class SimpleLLMClient:
         }
     
     def extract_entities_relationships(self, text):
-        """Extract entities and relationships from text"""
+        """Extract entities and relationships with strong business context"""
+        
+        # Enhanced prompt for better relationship extraction
         prompt = f"""
-        Analyze this text and extract entities and relationships for a knowledge graph.
+        You are an expert business analyst creating a knowledge graph from enterprise data.
         
-        Text: {text}
+        ANALYZE THIS TEXT: {text}
         
-        You MUST respond with ONLY valid JSON in this exact format (no other text):
+        EXTRACT:
+        1. ENTITIES (nodes) - People, Systems, Applications, Locations, Departments
+        2. RELATIONSHIPS (edges) - HOW entities connect to each other
+        3. BUSINESS CONTEXT - Purpose, function, ownership details
+        
+        CRITICAL INSTRUCTIONS:
+        - For EVERY entity, find its business purpose and connections
+        - Create relationships between entities (don't leave entities isolated)
+        - Include management hierarchy, system dependencies, location assignments
+        - Add rich properties showing business function and technical details
+        
+        RESPOND WITH ONLY THIS EXACT JSON STRUCTURE:
         {{
             "entities": [
-                {{"id": "unique_id", "label": "Name", "type": "person", "properties": {{"key": "value"}}}}
+                {{
+                    "id": "unique_snake_case_id",
+                    "label": "Display Name",
+                    "type": "person|system|application|location|organization",
+                    "properties": {{
+                        "business_function": "what this entity does",
+                        "role": "specific role or purpose",
+                        "department": "which department owns it",
+                        "status": "active|inactive|maintenance",
+                        "description": "detailed business context"
+                    }}
+                }}
             ],
             "relationships": [
-                {{"source": "entity_id", "target": "entity_id", "type": "manages", "properties": {{}}}}
+                {{
+                    "source": "source_entity_id",
+                    "target": "target_entity_id", 
+                    "type": "manages|reports_to|depends_on|located_in|works_for|runs_on|owns|administers|supports|uses",
+                    "properties": {{
+                        "description": "why this relationship exists",
+                        "business_impact": "what happens if this breaks"
+                    }}
+                }}
             ]
         }}
         
-        Entity types: person, system, application, location, organization
-        Relationship types: manages, depends_on, located_in, works_for, runs_on, uses
+        RELATIONSHIP TYPES TO LOOK FOR:
+        - "manages/administers/owns" (who controls what)
+        - "reports_to" (organizational hierarchy)  
+        - "depends_on/requires" (technical dependencies)
+        - "located_in/hosted_in" (physical/logical location)
+        - "works_for/member_of" (department membership)
+        - "runs_on/deployed_on" (application hosting)
+        - "supports/serves" (service relationships)
+        - "uses/consumes" (resource usage)
         
-        IMPORTANT: Return ONLY the JSON object, no explanations or markdown.
+        EXTRACT BUSINESS CONTEXT LIKE:
+        - What is the business purpose of each system?
+        - Who is responsible for managing it?
+        - What department does it serve?
+        - What other systems does it connect to?
+        - Where is it physically or logically located?
+        - What would break if this entity failed?
+        
+        EXAMPLES OF GOOD RELATIONSHIPS:
+        - "john_doe" --manages--> "web_server_01" (person manages system)
+        - "web_server_01" --depends_on--> "database_server" (system dependency)
+        - "crm_application" --runs_on--> "web_server_01" (app deployment)
+        - "web_server_01" --located_in--> "datacenter_nyc" (physical location)
+        - "john_doe" --reports_to--> "it_manager" (org hierarchy)
+        - "john_doe" --works_for--> "it_department" (department membership)
+        
+        ENSURE EVERY ENTITY HAS AT LEAST 1-2 RELATIONSHIPS!
         """
         
         try:
+            print("🧠 Sending enhanced prompt to LLM...")
             response = requests.post(
                 self.api_url,
                 headers=self.headers,
                 json={
                     "model": "gpt-3.5-turbo",
                     "messages": [
-                        {"role": "system", "content": "You are a knowledge graph expert. You MUST respond with ONLY valid JSON, no other text."},
+                        {
+                            "role": "system", 
+                            "content": "You are an expert enterprise architect who creates detailed knowledge graphs. You MUST respond with ONLY valid JSON showing rich business relationships. Focus on creating many meaningful connections between entities."
+                        },
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.1,
-                    "max_tokens": 2000
+                    "temperature": 0.2,  # Slightly higher for more creative relationship discovery
+                    "max_tokens": 3000   # More tokens for detailed relationships
                 },
-                timeout=30
+                timeout=45
             )
             
             print(f"API Response Status: {response.status_code}")
@@ -85,9 +144,9 @@ class SimpleLLMClient:
                 result = response.json()
                 content = result.get('choices', [{}])[0].get('message', {}).get('content', '{}')
                 
-                print(f"Raw LLM Response: {content[:200]}...")  # Debug output
+                print(f"Raw LLM Response: {content[:300]}...")
                 
-                # Clean the response - remove markdown formatting if present
+                # Clean the response
                 content = content.strip()
                 if content.startswith('```json'):
                     content = content[7:]
@@ -95,6 +154,119 @@ class SimpleLLMClient:
                     content = content[3:]
                 if content.endswith('```'):
                     content = content[:-3]
+                content = content.strip()
+                
+                try:
+                    parsed_data = json.loads(content)
+                    
+                    # Validate and enhance the data
+                    if 'entities' in parsed_data and 'relationships' in parsed_data:
+                        entities = parsed_data['entities']
+                        relationships = parsed_data['relationships']
+                        
+                        print(f"✅ LLM extracted: {len(entities)} entities, {len(relationships)} relationships")
+                        
+                        # Enhance with additional business relationships if sparse
+                        if len(relationships) < len(entities) * 0.5:  # If less than 0.5 relationships per entity
+                            print("⚡ Enhancing sparse relationships...")
+                            enhanced_data = self._enhance_relationships(parsed_data)
+                            return enhanced_data
+                        
+                        return parsed_data
+                    else:
+                        print("❌ Invalid JSON structure")
+                        return self._create_business_fallback(text)
+                        
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON parsing error: {e}")
+                    return self._create_business_fallback(text)
+                    
+            else:
+                print(f"❌ API Error: {response.status_code} - {response.text}")
+                return self._create_business_fallback(text)
+                
+        except Exception as e:
+            print(f"❌ LLM Error: {e}")
+            return self._create_business_fallback(text)
+    
+    def _enhance_relationships(self, data):
+        """Add logical business relationships if LLM output is sparse"""
+        entities = data['entities']
+        relationships = data['relationships']
+        
+        # Create lookup by type
+        by_type = {}
+        for entity in entities:
+            entity_type = entity.get('type', 'unknown')
+            if entity_type not in by_type:
+                by_type[entity_type] = []
+            by_type[entity_type].append(entity)
+        
+        # Add logical relationships
+        new_relationships = []
+        
+        # Connect people to organizations
+        people = by_type.get('person', [])
+        orgs = by_type.get('organization', [])
+        
+        for person in people:
+            # Find matching department in org
+            person_dept = person.get('properties', {}).get('department', '')
+            for org in orgs:
+                if person_dept.lower() in org.get('label', '').lower():
+                    new_relationships.append({
+                        "source": person['id'],
+                        "target": org['id'],
+                        "type": "works_for",
+                        "properties": {"description": f"Employee of {org['label']}"}
+                    })
+                    break
+        
+        # Connect systems to people (find owners/managers)
+        systems = by_type.get('system', [])
+        for system in systems:
+            system_props = system.get('properties', {})
+            # Look for owner/manager in system properties
+            for person in people:
+                person_name = person.get('label', '').lower()
+                if any(person_name in str(v).lower() for v in system_props.values()):
+                    new_relationships.append({
+                        "source": person['id'],
+                        "target": system['id'],
+                        "type": "manages",
+                        "properties": {"description": f"Responsible for {system['label']}"}
+                    })
+                    break
+        
+        # Connect applications to systems
+        applications = by_type.get('application', [])
+        for app in applications:
+            if systems:  # Connect to first available system
+                new_relationships.append({
+                    "source": app['id'],
+                    "target": systems[0]['id'],
+                    "type": "runs_on",
+                    "properties": {"description": f"{app['label']} hosted on {systems[0]['label']}"}
+                })
+        
+        # Connect systems to locations
+        locations = by_type.get('location', [])
+        if locations:
+            location = locations[0]  # Use first location
+            for system in systems:
+                new_relationships.append({
+                    "source": system['id'],
+                    "target": location['id'],
+                    "type": "located_in",
+                    "properties": {"description": f"Physically located in {location['label']}"}
+                })
+        
+        # Add new relationships
+        relationships.extend(new_relationships)
+        data['relationships'] = relationships
+        
+        print(f"⚡ Enhanced with {len(new_relationships)} additional relationships")
+        return datantent = content[:-3]
                 content = content.strip()
                 
                 # Try to parse JSON
