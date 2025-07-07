@@ -283,10 +283,13 @@ def main():
         api_url = st.text_input("API URL", value=LLM_API_URL)
         username = st.text_input("Username", value=LLM_USERNAME)
         password = st.text_input("Password", type="password", value=LLM_PASSWORD)
-    else:
-        # Use hardcoded credentials
+    
+    # Use the values (either from expander or defaults)
+    if not api_url:
         api_url = LLM_API_URL
+    if not username:
         username = LLM_USERNAME  
+    if not password:
         password = LLM_PASSWORD
     
     use_mock = st.sidebar.checkbox("Use Mock Data (for testing)", value=False)
