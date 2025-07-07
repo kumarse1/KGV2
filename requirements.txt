@@ -1,0 +1,8 @@
+streamlit==1.29.0
+pyvis==0.3.2
+pandas==2.1.4
+python-docx==0.8.11
+openpyxl==3.1.2
+requests==2.31.0
+networkx==3.2.1
+beautifulsoup4==4.12.2
