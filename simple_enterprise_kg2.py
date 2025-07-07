@@ -247,8 +247,40 @@ class SimpleKnowledgeGraph:
                 self.graph.add_edge(rel['source'], rel['target'], **rel)
     
     def generate_pyvis_html(self):
-        """Generate Pyvis visualization - Windows compatible"""
-        net = Network(height="600px", width="100%", bgcolor="#222222", font_color="white", directed=True)
+        """Generate Pyvis visualization with proper edges and layout"""
+        net = Network(
+            height="600px", 
+            width="100%", 
+            bgcolor="#1a1a1a", 
+            font_color="white", 
+            directed=True
+        )
+        
+        # Configure physics for better layout
+        net.set_options("""
+        {
+          "physics": {
+            "enabled": true,
+            "stabilization": {"iterations": 100},
+            "barnesHut": {
+              "gravitationalConstant": -8000,
+              "centralGravity": 0.3,
+              "springLength": 95,
+              "springConstant": 0.04,
+              "damping": 0.09
+            }
+          },
+          "layout": {
+            "improvedLayout": true,
+            "clusterThreshold": 150
+          },
+          "interaction": {
+            "dragNodes": true,
+            "dragView": true,
+            "zoomView": true
+          }
+        }
+        """)
         
         # Colors for different entity types
         colors = {
@@ -256,29 +288,74 @@ class SimpleKnowledgeGraph:
             'system': '#4ECDC4',
             'application': '#45B7D1',
             'location': '#96CEB4',
-            'organization': '#FFEAA7'
+            'organization': '#FFEAA7',
+            'unknown': '#BDC3C7'
         }
         
-        # Add nodes
+        print(f"🎨 Adding {len(self.graph.nodes)} nodes to visualization...")
+        
+        # Add nodes with enhanced styling
         for node_id, node_data in self.graph.nodes(data=True):
-            color = colors.get(node_data.get('type', 'unknown'), '#BDC3C7')
+            entity_type = node_data.get('type', 'unknown')
+            color = colors.get(entity_type, '#BDC3C7')
+            label = node_data.get('label', node_id)
+            
+            # Create detailed hover info
+            properties = node_data.get('properties', {})
+            hover_text = f"<b>{label}</b><br>"
+            hover_text += f"Type: {entity_type}<br>"
+            
+            if properties:
+                hover_text += "Properties:<br>"
+                for key, value in properties.items():
+                    hover_text += f"• {key}: {value}<br>"
+            
             net.add_node(
                 node_id,
-                label=node_data.get('label', node_id),
+                label=label,
                 color=color,
-                title=f"Type: {node_data.get('type', 'unknown')}",
-                size=25
+                title=hover_text,
+                size=30,
+                font={'size': 14, 'color': 'white'},
+                borderWidth=2,
+                borderWidthSelected=4
             )
         
-        # Add edges
+        print(f"🔗 Adding {len(self.graph.edges)} relationships to visualization...")
+        
+        # Add edges with enhanced styling and labels
+        edge_colors = {
+            'manages': '#E74C3C',
+            'depends_on': '#3498DB', 
+            'reports_to': '#9B59B6',
+            'located_in': '#2ECC71',
+            'works_for': '#F39C12',
+            'runs_on': '#E67E22',
+            'uses': '#1ABC9C'
+        }
+        
         for source, target, edge_data in self.graph.edges(data=True):
+            rel_type = edge_data.get('type', 'connected')
+            edge_color = edge_colors.get(rel_type, '#848484')
+            
+            # Create edge hover info
+            source_label = self.entities.get(source, {}).get('label', source)
+            target_label = self.entities.get(target, {}).get('label', target)
+            edge_title = f"{source_label} <b>--{rel_type}--></b> {target_label}"
+            
             net.add_edge(
                 source,
                 target,
-                label=edge_data.get('type', ''),
-                color='#848484',
-                arrows="to"
+                label=rel_type,
+                color={'color': edge_color, 'opacity': 0.8},
+                title=edge_title,
+                arrows={'to': {'enabled': True, 'scaleFactor': 1.2}},
+                width=3,
+                font={'size': 12, 'color': 'white'},
+                smooth={'enabled': True, 'type': 'continuous'}
             )
+        
+        print(f"✅ Graph configured with physics and layout")
         
         # Generate HTML without file operations - Windows compatible
         try:
@@ -299,46 +376,135 @@ class SimpleKnowledgeGraph:
             except:
                 pass  # Ignore cleanup errors
             
+            print(f"✅ Pyvis HTML generated successfully")
             return html_content
             
         except Exception as e:
-            # Fallback: generate simple HTML if Pyvis fails
-            return self._generate_fallback_html()
+            print(f"❌ Pyvis generation failed: {e}")
+            # Fallback: generate detailed HTML if Pyvis fails
+            return self._generate_detailed_fallback_html()
     
-    def _generate_fallback_html(self):
-        """Generate simple HTML if Pyvis fails"""
+    def _generate_detailed_fallback_html(self):
+        """Generate detailed HTML with relationship visualization if Pyvis fails"""
         html = """
-        <div style="background: #222; color: white; padding: 20px; border-radius: 8px;">
-            <h3>📊 Knowledge Graph Generated</h3>
-            <p>Pyvis visualization temporarily unavailable. Here's your graph data:</p>
-            <div style="background: #333; padding: 15px; border-radius: 4px; margin: 10px 0;">
+        <div style="background: #1a1a1a; color: white; padding: 20px; border-radius: 8px; font-family: Arial, sans-serif;">
+            <h2 style="color: #4ECDC4; text-align: center;">📊 Knowledge Graph Visualization</h2>
+            <p style="text-align: center; color: #ccc;">Interactive Pyvis unavailable - showing detailed graph structure</p>
         """
         
-        # Show entities
-        html += f"<strong>🏷️ Entities ({len(self.entities)}):</strong><br>"
-        for entity_id, entity in list(self.entities.items())[:10]:  # Show first 10
-            html += f"• {entity.get('label', entity_id)} ({entity.get('type', 'unknown')})<br>"
+        # Entity type colors for the legend
+        colors = {
+            'person': '#FF6B6B',
+            'system': '#4ECDC4',
+            'application': '#45B7D1',
+            'location': '#96CEB4',
+            'organization': '#FFEAA7'
+        }
         
-        if len(self.entities) > 10:
-            html += f"... and {len(self.entities) - 10} more entities<br>"
+        # Legend
+        html += '<div style="margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px;">'
+        html += '<h3 style="color: #45B7D1;">🎨 Entity Types Legend:</h3>'
+        for entity_type, color in colors.items():
+            html += f'<span style="background: {color}; color: black; padding: 4px 8px; margin: 2px; border-radius: 4px; display: inline-block;">{entity_type.title()}</span> '
+        html += '</div>'
         
-        # Show relationships
+        # Show entities grouped by type
+        html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">'
+        
+        # Left column - Entities
+        html += '<div style="background: #2a2a2a; padding: 15px; border-radius: 8px;">'
+        html += f'<h3 style="color: #FF6B6B;">🏷️ Entities ({len(self.entities)})</h3>'
+        
+        # Group entities by type
+        by_type = {}
+        for entity_id, entity in self.entities.items():
+            entity_type = entity.get('type', 'unknown')
+            if entity_type not in by_type:
+                by_type[entity_type] = []
+            by_type[entity_type].append(entity)
+        
+        for entity_type, entities in by_type.items():
+            color = colors.get(entity_type, '#BDC3C7')
+            html += f'<h4 style="color: {color};">{entity_type.title()}s ({len(entities)})</h4>'
+            for entity in entities:
+                html += f'<div style="margin: 8px 0; padding: 8px; background: #333; border-radius: 4px; border-left: 4px solid {color};">'
+                html += f'<strong>{entity.get("label", entity["id"])}</strong><br>'
+                
+                properties = entity.get('properties', {})
+                if properties:
+                    html += '<small style="color: #ccc;">'
+                    prop_list = [f"{k}: {v}" for k, v in list(properties.items())[:3]]
+                    html += " | ".join(prop_list)
+                    if len(properties) > 3:
+                        html += f" (+{len(properties)-3} more)"
+                    html += '</small>'
+                html += '</div>'
+        
+        html += '</div>'
+        
+        # Right column - Relationships
+        html += '<div style="background: #2a2a2a; padding: 15px; border-radius: 8px;">'
         relationships = list(self.graph.edges(data=True))
-        html += f"<br><strong>🔗 Relationships ({len(relationships)}):</strong><br>"
-        for source, target, data in relationships[:10]:  # Show first 10
-            source_label = self.entities.get(source, {}).get('label', source)
-            target_label = self.entities.get(target, {}).get('label', target)
+        html += f'<h3 style="color: #45B7D1;">🔗 Relationships ({len(relationships)})</h3>'
+        
+        # Group relationships by type
+        rel_by_type = {}
+        for source, target, data in relationships:
             rel_type = data.get('type', 'connected')
-            html += f"• {source_label} --{rel_type}--> {target_label}<br>"
+            if rel_type not in rel_by_type:
+                rel_by_type[rel_type] = []
+            rel_by_type[rel_type].append((source, target, data))
         
-        if len(relationships) > 10:
-            html += f"... and {len(relationships) - 10} more relationships<br>"
+        for rel_type, rels in rel_by_type.items():
+            rel_colors = {
+                'manages': '#E74C3C',
+                'depends_on': '#3498DB', 
+                'reports_to': '#9B59B6',
+                'located_in': '#2ECC71',
+                'works_for': '#F39C12'
+            }
+            color = rel_colors.get(rel_type, '#848484')
+            
+            html += f'<h4 style="color: {color};">{rel_type.replace("_", " ").title()} ({len(rels)})</h4>'
+            
+            for source, target, data in rels[:5]:  # Show first 5 of each type
+                source_label = self.entities.get(source, {}).get('label', source)
+                target_label = self.entities.get(target, {}).get('label', target)
+                
+                html += f'<div style="margin: 6px 0; padding: 6px; background: #333; border-radius: 4px; border-left: 3px solid {color};">'
+                html += f'<span style="color: #FF6B6B;">{source_label}</span> '
+                html += f'<span style="color: {color};">--{rel_type}--></span> '
+                html += f'<span style="color: #4ECDC4;">{target_label}</span>'
+                html += '</div>'
+            
+            if len(rels) > 5:
+                html += f'<small style="color: #888;">... and {len(rels) - 5} more {rel_type} relationships</small><br>'
         
-        html += """
+        html += '</div>'
+        html += '</div>'  # Close grid
+        
+        # Network structure summary
+        html += '<div style="background: #2a2a2a; padding: 15px; border-radius: 8px; margin: 20px 0;">'
+        html += '<h3 style="color: #FFEAA7;">📈 Graph Structure Summary</h3>'
+        html += f'<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center;">'
+        html += f'<div><span style="font-size: 2em; color: #FF6B6B;">{len(self.entities)}</span><br><small>Total Entities</small></div>'
+        html += f'<div><span style="font-size: 2em; color: #45B7D1;">{len(relationships)}</span><br><small>Total Relationships</small></div>'
+        html += f'<div><span style="font-size: 2em; color: #4ECDC4;">{len(by_type)}</span><br><small>Entity Types</small></div>'
+        html += f'<div><span style="font-size: 2em; color: #FFEAA7;">{len(rel_by_type)}</span><br><small>Relationship Types</small></div>'
+        html += '</div></div>'
+        
+        html += '''
+            <div style="background: #2a2a2a; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <h3 style="color: #96CEB4;">💡 Your Knowledge Graph is Working!</h3>
+                <p>The graph structure shows all entities and their relationships. Use the Q&A section below to explore connections like:</p>
+                <ul style="color: #ccc;">
+                    <li>"Who manages [system name]?"</li>
+                    <li>"What does [person name] manage?"</li>
+                    <li>"Show all people" / "Show all systems"</li>
+                </ul>
             </div>
-            <p>💡 Your knowledge graph is working! Try the Q&A section below.</p>
         </div>
-        """
+        '''
         
         return html
     
