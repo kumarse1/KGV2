@@ -1,23 +1,12 @@
 import streamlit as st
 
-st.set_page_config(page_title="📊 Complete Knowledge Graph System", layout="wide")
+st.set_page_config(page_title="📊 Direct Excel Knowledge Graph", layout="wide")
 
 import pandas as pd
-import requests
-import base64
-import json
 import networkx as nx
 from pyvis.network import Network
 import os
 import uuid
-
-# ========================================
-# 🔧 CONFIGURE YOUR LLM CREDENTIALS HERE
-# ========================================
-LLM_API_URL = "https://your-api-endpoint.com/v1/chat/completions"
-LLM_USERNAME = "your_username_here"
-LLM_PASSWORD = "your_password_here"
-# ========================================
 
 class DirectExcelMapper:
     """Directly map Excel data to knowledge graph without LLM guessing"""
@@ -48,8 +37,7 @@ class DirectExcelMapper:
         relationships_created = 0
         
         for idx, row in df.iterrows():
-            if idx >= 50:  # Reasonable limit
-                st.warning(f"⚠️ Processing limited to first 50 rows to maintain performance")
+            if idx >= 20:  # Limit to prevent overload
                 break
                 
             # Create main component from this row
@@ -82,6 +70,8 @@ class DirectExcelMapper:
     
     def _extract_component_name(self, row, columns):
         """Extract the best name for this component"""
+        name_candidates = []
+        
         # Look for common name columns
         name_columns = [col for col in columns if any(keyword in col.lower() 
                        for keyword in ['name', 'title', 'label', 'component', 'asset', 'system', 'application'])]
@@ -106,24 +96,31 @@ class DirectExcelMapper:
         # Application patterns
         if any(keyword in row_text for keyword in ['application', 'app', 'software', 'program', 'tool']):
             return 'application'
+        
         # Server patterns
         elif any(keyword in row_text for keyword in ['server', 'host', 'machine', 'vm', 'virtual']):
             return 'server'
+        
         # Database patterns
         elif any(keyword in row_text for keyword in ['database', 'db', 'data', 'sql', 'oracle', 'mysql']):
             return 'database'
+        
         # Network patterns
         elif any(keyword in row_text for keyword in ['network', 'router', 'switch', 'firewall', 'load balancer']):
             return 'network'
+        
         # Service patterns
         elif any(keyword in row_text for keyword in ['service', 'api', 'interface', 'endpoint']):
             return 'service'
+        
         # Person patterns
         elif any(keyword in row_text for keyword in ['admin', 'manager', 'user', 'owner', 'analyst', 'engineer']):
             return 'person'
+        
         # Location patterns
         elif any(keyword in row_text for keyword in ['datacenter', 'office', 'location', 'site', 'building']):
             return 'location'
+        
         # Default
         else:
             return 'component'
@@ -201,6 +198,26 @@ class DirectExcelMapper:
                         "properties": {"description": f"Belongs to {value}", "source_column": col}
                     })
                     relationships_count += 1
+                
+                # Dependency relationships
+                elif any(keyword in col_lower for keyword in ['depends', 'requires', 'uses', 'connects']):
+                    dep_id = f"dependency_{value.replace(' ', '_').lower()}"
+                    if dep_id not in self.entities:
+                        self.entities[dep_id] = {
+                            "id": dep_id,
+                            "label": value,
+                            "type": "system",
+                            "properties": {"type": "Dependency", "source": f"Row {row_idx + 1}"},
+                            "excel_row": f"Derived from row {row_idx + 1}"
+                        }
+                    
+                    self.relationships.append({
+                        "source": component_id,
+                        "target": dep_id,
+                        "type": "depends_on",
+                        "properties": {"description": f"Depends on {value}", "source_column": col}
+                    })
+                    relationships_count += 1
         
         return relationships_count
     
@@ -235,7 +252,7 @@ class ExcelChatEngine:
             self.entity_by_type[entity_type].append(entity['id'])
     
     def answer_question(self, question):
-        """Answer questions about the Excel data using in-memory search"""
+        """Answer questions about the Excel data and knowledge graph"""
         question_lower = question.lower().strip()
         
         # Oracle usage questions
@@ -252,6 +269,7 @@ class ExcelChatEngine:
         
         # What uses X questions
         elif 'what uses' in question_lower or 'what applications use' in question_lower:
+            # Extract the technology name
             tech_name = self._extract_technology_name(question_lower)
             if tech_name:
                 return self._find_what_uses_technology(tech_name)
@@ -282,7 +300,18 @@ class ExcelChatEngine:
         elif any(phrase in question_lower for phrase in ['technology stack', 'tech stack', 'technologies used']):
             return self._find_technology_stack()
         
-        # Search questions
+        # Dependencies questions
+        elif any(word in question_lower for word in ['depends', 'dependencies', 'requires']):
+            entity_name = self._extract_entity_name_from_question(question_lower, ['depends', 'dependencies', 'requires'])
+            if entity_name:
+                return self._find_dependencies(entity_name)
+        
+        # Department questions
+        elif any(word in question_lower for word in ['department', 'team', 'group']):
+            if 'what' in question_lower:
+                return self._find_department_breakdown()
+        
+        # Excel data search
         elif any(phrase in question_lower for phrase in ['search', 'find', 'contains']):
             search_term = self._extract_search_term(question_lower)
             if search_term:
@@ -293,9 +322,10 @@ class ExcelChatEngine:
             return self._provide_suggestions()
     
     def _find_oracle_usage(self):
-        """Find applications that use Oracle - IN-MEMORY SEARCH"""
+        """Find applications that use Oracle"""
         oracle_users = []
         
+        # Search through Excel data for Oracle mentions
         for idx, row in self.df.iterrows():
             row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
             if 'oracle' in row_text:
@@ -320,7 +350,7 @@ class ExcelChatEngine:
             return "❌ **No Oracle usage found** in your Excel data.\n\n💡 Try searching for other databases like 'MySQL', 'SQL Server', or 'PostgreSQL'"
     
     def _find_common_software(self):
-        """Find common software/technologies - IN-MEMORY ANALYSIS"""
+        """Find common software/technologies across applications"""
         software_count = {}
         
         # Look for software mentions in Excel data
@@ -359,7 +389,7 @@ class ExcelChatEngine:
             return "❌ **No common software patterns found** in your Excel data.\n\n💡 The system looks for technologies like Oracle, MySQL, Java, Python, etc."
     
     def _find_database_usage(self):
-        """Find database usage - IN-MEMORY SEARCH"""
+        """Find database usage across applications"""
         database_keywords = ['oracle', 'mysql', 'sql server', 'postgres', 'postgresql', 'mongodb', 'redis', 'cassandra', 'db2']
         database_usage = {}
         
@@ -390,7 +420,7 @@ class ExcelChatEngine:
             return "❌ **No database usage found** in your Excel data.\n\n💡 Searched for: Oracle, MySQL, SQL Server, PostgreSQL, MongoDB, etc."
     
     def _find_what_uses_technology(self, tech_name):
-        """Find what uses specific technology - IN-MEMORY SEARCH"""
+        """Find what components use a specific technology"""
         users = []
         
         for idx, row in self.df.iterrows():
@@ -425,8 +455,32 @@ class ExcelChatEngine:
         else:
             return f"❌ **No components found using {tech_name.title()}**\n\n💡 Try searching for other technologies or check spelling"
     
+    def _find_who_manages(self, entity_name):
+        """Find who manages a specific entity"""
+        # Search through relationships
+        managers = []
+        for rel in self.relationships:
+            if rel['type'] == 'manages':
+                target_entity = self.entities.get(rel['target'])
+                if target_entity and entity_name.lower() in target_entity['label'].lower():
+                    manager_entity = self.entities.get(rel['source'])
+                    if manager_entity:
+                        managers.append({
+                            'manager': manager_entity['label'],
+                            'entity': target_entity['label'],
+                            'relationship': rel['type']
+                        })
+        
+        if managers:
+            result = f"👤 **Management for '{entity_name}':**\n\n"
+            for mgr in managers:
+                result += f"• **{mgr['manager']}** manages **{mgr['entity']}**\n"
+            return result
+        else:
+            return f"❌ **No management information found for '{entity_name}'**\n\n💡 Try checking the exact component name or look for ownership data"
+    
     def _search_excel_data(self, search_term):
-        """Search through Excel data - IN-MEMORY SEARCH"""
+        """Search through Excel data for a term"""
         matches = []
         
         for idx, row in self.df.iterrows():
@@ -461,8 +515,23 @@ class ExcelChatEngine:
         else:
             return f"❌ **No matches found for '{search_term}'**\n\n💡 Try different search terms or check spelling"
     
+    def _handle_show_all_question(self, question):
+        """Handle 'show all' type questions"""
+        if any(word in question for word in ['application', 'app']):
+            return self._show_all_by_type('application')
+        elif any(word in question for word in ['server', 'servers']):
+            return self._show_all_by_type('server')
+        elif any(word in question for word in ['database', 'databases', 'db']):
+            return self._show_all_by_type('database')
+        elif any(word in question for word in ['person', 'people', 'manager', 'admin']):
+            return self._show_all_by_type('person')
+        elif any(word in question for word in ['location', 'locations', 'site']):
+            return self._show_all_by_type('location')
+        else:
+            return self._show_all_components()
+    
     def _show_all_by_type(self, component_type):
-        """Show all components of specific type - IN-MEMORY FILTER"""
+        """Show all components of a specific type"""
         components = self.entity_by_type.get(component_type, [])
         
         if components:
@@ -488,21 +557,6 @@ class ExcelChatEngine:
             return result
         else:
             return f"❌ **No {component_type}s found** in your data"
-    
-    def _handle_show_all_question(self, question):
-        """Handle 'show all' type questions"""
-        if any(word in question for word in ['application', 'app']):
-            return self._show_all_by_type('application')
-        elif any(word in question for word in ['server', 'servers']):
-            return self._show_all_by_type('server')
-        elif any(word in question for word in ['database', 'databases', 'db']):
-            return self._show_all_by_type('database')
-        elif any(word in question for word in ['person', 'people', 'manager', 'admin']):
-            return self._show_all_by_type('person')
-        elif any(word in question for word in ['location', 'locations', 'site']):
-            return self._show_all_by_type('location')
-        else:
-            return self._show_all_components()
     
     def _show_all_components(self):
         """Show all components grouped by type"""
@@ -541,6 +595,7 @@ class ExcelChatEngine:
 • "Show all applications"
 • "Show all servers"
 • "List all databases"
+• "What are the dependencies for [component]?"
 
 🔎 **Search:**
 • "Search for [any term]"
@@ -551,6 +606,7 @@ class ExcelChatEngine:
     # Helper methods
     def _get_component_name_from_row(self, row):
         """Extract component name from Excel row"""
+        # Look for name columns first
         name_columns = [col for col in self.df.columns if any(keyword in col.lower() 
                        for keyword in ['name', 'title', 'component', 'asset', 'system', 'application'])]
         
@@ -558,6 +614,7 @@ class ExcelChatEngine:
             if pd.notna(row[col]) and str(row[col]).strip():
                 return str(row[col]).strip()
         
+        # Fallback to first non-empty column
         for col in self.df.columns:
             if pd.notna(row[col]) and str(row[col]).strip():
                 return str(row[col]).strip()
@@ -579,6 +636,7 @@ class ExcelChatEngine:
     
     def _extract_technology_name(self, question):
         """Extract technology name from question"""
+        # Simple extraction - look for common patterns
         words = question.split()
         tech_indicators = ['uses', 'use', 'using', 'with']
         
@@ -597,16 +655,6 @@ class ExcelChatEngine:
                     return parts[1].strip(' ?.,')
         return None
     
-    def _extract_search_term(self, question):
-        """Extract search term from question"""
-        search_indicators = ['search for', 'find', 'search', 'contains']
-        for indicator in search_indicators:
-            if indicator in question:
-                parts = question.split(indicator)
-                if len(parts) > 1:
-                    return parts[1].strip(' ?.,')
-        return None
-    
     def _get_oracle_context(self, row):
         """Get context about Oracle usage from row"""
         oracle_context = []
@@ -614,76 +662,378 @@ class ExcelChatEngine:
             if pd.notna(row[col]) and 'oracle' in str(row[col]).lower():
                 oracle_context.append(f"{col}: {row[col]}")
         return ' | '.join(oracle_context[:2]) if oracle_context else None
+    """Generate graph directly from Excel mapping"""
     
-    def _find_who_manages(self, entity_name):
-        """Find who manages entity - RELATIONSHIP LOOKUP"""
-        managers = []
-        for rel in self.relationships:
-            if rel['type'] == 'manages':
-                target_entity = self.entities.get(rel['target'])
-                if target_entity and entity_name.lower() in target_entity['label'].lower():
-                    manager_entity = self.entities.get(rel['source'])
-                    if manager_entity:
-                        managers.append({
-                            'manager': manager_entity['label'],
-                            'entity': target_entity['label']
-                        })
+    def __init__(self):
+        self.graph = nx.DiGraph()
+        self.entities = {}
+    
+    def build_from_excel_data(self, data):
+        """Build graph from direct Excel mapping"""
+        entities = data.get('entities', [])
+        relationships = data.get('relationships', [])
         
-        if managers:
-            result = f"👤 **Management for '{entity_name}':**\n\n"
-            for mgr in managers:
-                result += f"• **{mgr['manager']}** manages **{mgr['entity']}**\n"
-            return result
-        else:
-            return f"❌ **No management information found for '{entity_name}'**"
-    
-    def _extract_person_name_from_question(self, question):
-        """Extract person name from 'what does X manage' questions"""
-        if 'what does' in question and 'manage' in question:
-            start = question.find('what does') + 9
-            end = question.find('manage')
-            return question[start:end].strip()
-        return None
-    
-    def _find_what_person_manages(self, person_name):
-        """Find what person manages - RELATIONSHIP LOOKUP"""
-        managed = []
-        for rel in self.relationships:
-            if rel['type'] == 'manages':
-                manager_entity = self.entities.get(rel['source'])
-                if manager_entity and person_name.lower() in manager_entity['label'].lower():
-                    target_entity = self.entities.get(rel['target'])
-                    if target_entity:
-                        managed.append(target_entity['label'])
+        st.write(f"### 🔨 Building Knowledge Graph")
+        st.write(f"**Components:** {len(entities)} | **Relationships:** {len(relationships)}")
         
-        if managed:
-            result = f"👤 **{person_name} manages:**\n\n"
-            for item in managed:
-                result += f"• {item}\n"
-            return result
-        else:
-            return f"❌ **No management info found for {person_name}**"
-    
-    def _extract_location_name(self, question):
-        """Extract location name from question"""
-        location_indicators = ['what is in', 'in', 'location', 'datacenter', 'site']
-        for indicator in location_indicators:
-            if indicator in question:
-                parts = question.split(indicator)
-                if len(parts) > 1:
-                    return parts[1].strip(' ?.,')
-        return None
-    
-    def _find_in_location(self, location_name):
-        """Find components in location - RELATIONSHIP LOOKUP"""
-        components = []
-        for rel in self.relationships:
-            if rel['type'] == 'located_in':
-                location_entity = self.entities.get(rel['target'])
-                if location_entity and location_name.lower() in location_entity['label'].lower():
-                    component_entity = self.entities.get(rel['source'])
-                    if component_entity:
-                        components.append(component_entity['label'])
+        # Add entities
+        for entity in entities:
+            self.entities[entity['id']] = entity
+            self.graph.add_node(entity['id'], **entity)
         
-        if components:
-            result = f"📍 **Components in {location_name}:**
+        # Add relationships
+        valid_rels = 0
+        for rel in relationships:
+            if rel['source'] in self.entities and rel['target'] in self.entities:
+                self.graph.add_edge(rel['source'], rel['target'], **rel)
+                valid_rels += 1
+        
+        # Show statistics
+        node_types = {}
+        for entity in entities:
+            etype = entity.get('type', 'unknown')
+            node_types[etype] = node_types.get(etype, 0) + 1
+        
+        st.write("**Component Types:**")
+        for etype, count in node_types.items():
+            st.write(f"• {etype.title()}: {count}")
+        
+        st.success(f"✅ Graph built: {len(self.entities)} nodes, {valid_rels} relationships")
+    
+    def generate_rich_visualization(self):
+        """Generate rich visualization showing Excel data"""
+        
+        # Enhanced colors
+        colors = {
+            'application': '#FF6B6B',    # Red
+            'server': '#4ECDC4',         # Teal  
+            'database': '#45B7D1',       # Blue
+            'network': '#96CEB4',        # Green
+            'service': '#FFEAA7',        # Yellow
+            'person': '#DDA0DD',         # Purple
+            'location': '#FFA07A',       # Orange
+            'organization': '#98D8C8',   # Mint
+            'component': '#BDC3C7'       # Gray
+        }
+        
+        net = Network(
+            height="700px", 
+            width="100%", 
+            bgcolor="#f8f9fa", 
+            font_color="black",
+            directed=True
+        )
+        
+        # Configure physics
+        net.set_options("""
+        {
+          "physics": {
+            "enabled": true,
+            "stabilization": {"iterations": 200},
+            "barnesHut": {
+              "gravitationalConstant": -2000,
+              "centralGravity": 0.1,
+              "springLength": 150,
+              "springConstant": 0.05,
+              "damping": 0.09
+            }
+          }
+        }
+        """)
+        
+        # Add nodes with rich information
+        for node_id, node_data in self.graph.nodes(data=True):
+            entity_type = node_data.get('type', 'component')
+            color = colors.get(entity_type, '#BDC3C7')
+            label = node_data.get('label', node_id)
+            
+            # Create detailed hover info from Excel data
+            properties = node_data.get('properties', {})
+            hover_text = f"<div style='max-width: 300px; font-family: Arial;'>"
+            hover_text += f"<h3 style='color: {color}; margin: 0;'>{label}</h3>"
+            hover_text += f"<p><strong>Type:</strong> {entity_type.title()}</p>"
+            
+            if 'excel_row' in node_data:
+                hover_text += f"<p><strong>Excel Row:</strong> {node_data['excel_row']}</p>"
+            
+            if properties:
+                hover_text += "<p><strong>Details from Excel:</strong></p><ul>"
+                for key, value in list(properties.items())[:5]:  # Show first 5 properties
+                    clean_key = key.replace('_', ' ').title()
+                    hover_text += f"<li><strong>{clean_key}:</strong> {value}</li>"
+                hover_text += "</ul>"
+            
+            hover_text += "</div>"
+            
+            # Size based on connections
+            connections = len(list(self.graph.neighbors(node_id)))
+            size = max(30, min(60, 30 + connections * 5))
+            
+            net.add_node(
+                node_id,
+                label=label,
+                color=color,
+                title=hover_text,
+                size=size,
+                font={'size': 14, 'color': 'black'},
+                borderWidth=2
+            )
+        
+        # Add edges with relationship details
+        edge_colors = {
+            'manages': '#E74C3C',
+            'located_in': '#2ECC71', 
+            'belongs_to': '#3498DB',
+            'depends_on': '#9B59B6',
+            'supports': '#F39C12'
+        }
+        
+        for source, target, edge_data in self.graph.edges(data=True):
+            rel_type = edge_data.get('type', 'connected')
+            edge_color = edge_colors.get(rel_type, '#7F8C8D')
+            
+            # Create edge hover info
+            edge_props = edge_data.get('properties', {})
+            edge_title = f"<strong>{rel_type.replace('_', ' ').title()}</strong><br>"
+            if 'description' in edge_props:
+                edge_title += edge_props['description']
+            if 'source_column' in edge_props:
+                edge_title += f"<br><small>From Excel column: {edge_props['source_column']}</small>"
+            
+            net.add_edge(
+                source,
+                target,
+                label=rel_type.replace('_', ' '),
+                color={'color': edge_color, 'opacity': 0.8},
+                title=edge_title,
+                arrows={'to': {'enabled': True, 'scaleFactor': 1.2}},
+                width=3,
+                font={'size': 12}
+            )
+        
+        # Generate HTML with legend
+        try:
+            temp_filename = f"excel_graph_{uuid.uuid4().hex[:8]}.html"
+            net.save_graph(temp_filename)
+            
+            with open(temp_filename, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            
+            # Add comprehensive legend
+            legend_html = self._create_excel_legend(colors, edge_colors)
+            html_content = html_content.replace('</body>', f'{legend_html}</body>')
+            
+            os.remove(temp_filename)
+            return html_content
+            
+        except Exception as e:
+            return f"<div style='padding: 20px; color: red;'>Visualization Error: {str(e)}</div>"
+    
+    def _create_excel_legend(self, colors, edge_colors):
+        """Create comprehensive legend for Excel-based graph"""
+        legend = """
+        <div style="position: fixed; top: 10px; right: 10px; background: rgba(255,255,255,0.95); 
+                    padding: 15px; border: 2px solid #333; border-radius: 10px; 
+                    font-family: Arial; font-size: 12px; max-width: 250px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            <h3 style="margin: 0 0 10px 0; color: #333;">📊 Excel Knowledge Graph</h3>
+            
+            <div style="margin-bottom: 10px;">
+                <strong>Component Types:</strong><br>
+        """
+        
+        # Add component types
+        for comp_type, color in colors.items():
+            legend += f"""
+                <div style="margin: 2px 0; display: flex; align-items: center;">
+                    <div style="width: 12px; height: 12px; background: {color}; 
+                               border-radius: 50%; margin-right: 6px; border: 1px solid #666;"></div>
+                    <span>{comp_type.title()}</span>
+                </div>
+            """
+        
+        legend += """
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+                <strong>Relationships:</strong><br>
+        """
+        
+        # Add relationship types
+        for rel_type, color in edge_colors.items():
+            legend += f"""
+                <div style="margin: 2px 0; display: flex; align-items: center;">
+                    <div style="width: 16px; height: 2px; background: {color}; margin-right: 6px;"></div>
+                    <span>{rel_type.replace('_', ' ').title()}</span>
+                </div>
+            """
+        
+        legend += f"""
+            </div>
+            
+            <div style="border-top: 1px solid #ccc; padding-top: 8px; font-size: 11px; color: #666;">
+                <strong>Graph Stats:</strong><br>
+                • Nodes: {len(self.graph.nodes)}<br>
+                • Edges: {len(self.graph.edges)}<br>
+                • Source: Direct Excel mapping
+            </div>
+            
+            <div style="margin-top: 8px; font-size: 10px; color: #888;">
+                💡 Hover over nodes for Excel details<br>
+                🖱️ Drag nodes to rearrange
+            </div>
+        </div>
+        """
+        
+        return legend
+
+def main():
+    st.title("📊 Direct Excel Knowledge Graph")
+    st.markdown("**Map your Excel data directly to knowledge graph - no LLM guessing!**")
+    
+    st.info("🎯 **How it works:** Each Excel row becomes a component. Columns like 'Owner', 'Location', 'Department' create automatic relationships.")
+    
+    # File upload
+    st.header("📁 Upload Your Excel/CSV File")
+    uploaded_file = st.file_uploader(
+        "Choose your CMDB Excel file", 
+        type=['csv', 'xlsx', 'xls'],
+        help="Your Excel data will be mapped directly - each row becomes a component"
+    )
+    
+    if uploaded_file:
+        st.success(f"📄 **File loaded:** {uploaded_file.name}")
+        
+        try:
+            # Read the file
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            st.write(f"**📋 Excel contains:** {len(df)} rows × {len(df.columns)} columns")
+            
+            # Process directly
+            if st.button("🚀 Map Excel to Knowledge Graph", type="primary"):
+                with st.spinner("Mapping your Excel data directly..."):
+                    
+                    # Direct mapping without LLM
+                    mapper = DirectExcelMapper()
+                    graph_data = mapper.process_excel(df)
+                    
+                    # Build and visualize
+                    kg = DirectKnowledgeGraph()
+                    kg.build_from_excel_data(graph_data)
+                    
+                    # Generate rich visualization
+                    html_content = kg.generate_rich_visualization()
+                    
+                    # Create chat engine
+                    chat_engine = ExcelChatEngine(graph_data['entities'], graph_data['relationships'], df)
+                    
+                    st.header("🕸️ Your Excel Knowledge Graph")
+                    st.markdown("**🎯 This graph shows your actual Excel data with real business relationships**")
+                    
+                    # Display the graph
+                    st.components.v1.html(html_content, height=750)
+                    
+                    # Chat Interface
+                    st.header("💬 Ask Questions About Your Data")
+                    st.markdown("**🤖 Ask natural language questions about your Excel components and relationships**")
+                    
+                    # Example questions
+                    with st.expander("💡 Example Questions You Can Ask"):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("""
+                            **🔍 Technology Questions:**
+                            - "What applications use Oracle?"
+                            - "What software is common in applications?"
+                            - "What uses MySQL?"
+                            - "Search for Java"
+                            
+                            **👤 Management Questions:**
+                            - "Who manages Web Server?"
+                            - "What does John Smith manage?"
+                            """)
+                        
+                        with col2:
+                            st.markdown("""
+                            **📍 Location & General:**
+                            - "What is in DataCenter-A?"
+                            - "Show all applications"
+                            - "List all databases"
+                            - "Show all servers"
+                            
+                            **🔎 Search Anything:**
+                            - "Search for Linux"
+                            - "Find components with Production"
+                            """)
+                    
+                    # Chat input and response
+                    question = st.text_input(
+                        "🗣️ Ask your question:",
+                        placeholder="e.g., What applications use Oracle?",
+                        help="Ask about technologies, management, locations, or search for any term"
+                    )
+                    
+                    if question:
+                        with st.spinner("🔍 Analyzing your Excel data..."):
+                            answer = chat_engine.answer_question(question)
+                            
+                            st.markdown("### 💬 Answer:")
+                            st.markdown(answer)
+                    
+                    # Quick action buttons
+                    st.markdown("### 🚀 Quick Questions")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        if st.button("📊 Common Software"):
+                            answer = chat_engine._find_common_software()
+                            st.markdown("**Answer:**")
+                            st.markdown(answer)
+                    
+                    with col2:
+                        if st.button("🗄️ Database Usage"):
+                            answer = chat_engine._find_database_usage()
+                            st.markdown("**Answer:**")
+                            st.markdown(answer)
+                    
+                    with col3:
+                        if st.button("📋 All Applications"):
+                            answer = chat_engine._show_all_by_type('application')
+                            st.markdown("**Answer:**")
+                            st.markdown(answer)
+                    
+                    with col4:
+                        if st.button("💻 All Servers"):
+                            answer = chat_engine._show_all_by_type('server')
+                            st.markdown("**Answer:**")
+                            st.markdown(answer)
+                    
+                    # Show extracted data summary
+                    with st.expander("📋 View Extracted Components & Relationships"):
+                        entities = graph_data.get('entities', [])
+                        relationships = graph_data.get('relationships', [])
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write("**🏷️ Components:**")
+                            for entity in entities[:10]:
+                                st.write(f"• **{entity['label']}** ({entity['type']}) - Row {entity.get('excel_row', '?')}")
+                        
+                        with col2:
+                            st.write("**🔗 Relationships:**")
+                            for rel in relationships[:10]:
+                                source_name = next((e['label'] for e in entities if e['id'] == rel['source']), rel['source'])
+                                target_name = next((e['label'] for e in entities if e['id'] == rel['target']), rel['target'])
+                                st.write(f"• {source_name} **{rel['type']}** {target_name}")
+                    
+        except Exception as e:
+            st.error(f"❌ **Error reading file:** {str(e)}")
+            st.write("Please ensure your file is a valid Excel (.xlsx) or CSV (.csv) file.")
+
+if __name__ == "__main__":
+    main()
