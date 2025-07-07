@@ -58,11 +58,11 @@ class KnowledgeGraphGenerator:
             entity_type = entity.get('type', 'unknown')
             properties = entity.get('properties', {})
             
-            # Add node to NetworkX graph
+            # Add node to NetworkX graph (avoid 'type' conflict by using 'entity_type')
             self.graph.add_node(
                 entity_id,
                 label=label,
-                type=entity_type,
+                entity_type=entity_type,
                 color=self.entity_colors.get(entity_type, '#BDC3C7'),
                 **properties
             )
@@ -84,7 +84,7 @@ class KnowledgeGraphGenerator:
                 self.graph.add_edge(
                     source,
                     target,
-                    type=rel_type,
+                    rel_type=rel_type,
                     color=self.relationship_colors.get(rel_type, '#BDC3C7'),
                     **properties
                 )
@@ -149,8 +149,8 @@ class KnowledgeGraphGenerator:
         for node_id, node_data in self.graph.nodes(data=True):
             # Create detailed hover info
             properties_text = "\n".join([f"{k}: {v}" for k, v in node_data.items() 
-                                       if k not in ['label', 'type', 'color']])
-            hover_info = f"Type: {node_data.get('type', 'unknown')}\n{properties_text}"
+                                       if k not in ['label', 'entity_type', 'color']])
+            hover_info = f"Type: {node_data.get('entity_type', 'unknown')}\n{properties_text}"
             
             net.add_node(
                 node_id,
@@ -165,13 +165,13 @@ class KnowledgeGraphGenerator:
         for source, target, edge_data in self.graph.edges(data=True):
             # Create detailed hover info for edges
             properties_text = "\n".join([f"{k}: {v}" for k, v in edge_data.items() 
-                                       if k not in ['type', 'color']])
-            hover_info = f"Relationship: {edge_data.get('type', 'unknown')}\n{properties_text}"
+                                       if k not in ['rel_type', 'color']])
+            hover_info = f"Relationship: {edge_data.get('rel_type', 'unknown')}\n{properties_text}"
             
             net.add_edge(
                 source,
                 target,
-                label=edge_data.get('type', ''),
+                label=edge_data.get('rel_type', ''),
                 color=edge_data.get('color', '#BDC3C7'),
                 title=hover_info,
                 arrows="to",
@@ -211,12 +211,12 @@ class KnowledgeGraphGenerator:
         
         # Count node types
         for node_id, node_data in self.graph.nodes(data=True):
-            node_type = node_data.get('type', 'unknown')
+            node_type = node_data.get('entity_type', 'unknown')
             stats['node_types'][node_type] = stats['node_types'].get(node_type, 0) + 1
         
         # Count relationship types
         for source, target, edge_data in self.graph.edges(data=True):
-            rel_type = edge_data.get('type', 'unknown')
+            rel_type = edge_data.get('rel_type', 'unknown')
             stats['relationship_types'][rel_type] = stats['relationship_types'].get(rel_type, 0) + 1
         
         return stats
