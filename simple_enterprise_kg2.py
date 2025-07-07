@@ -24,6 +24,9 @@ import os
 from docx import Document
 import io
 
+# PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
+st.set_page_config(page_title="🔧 Fixed Knowledge Graph", layout="wide")
+
 # Simple File Processor - CONTROLLED
 class ControlledFileProcessor:
     def process_file(self, uploaded_file):
@@ -354,7 +357,7 @@ class ControlledKnowledgeGraph:
 
 # Simple Streamlit App
 def main():
-    st.set_page_config(page_title="🔧 Fixed Knowledge Graph", layout="wide")
+    # Page config MUST be first - remove any duplicate calls
     
     st.title("🔧 Fixed Knowledge Graph Generator")
     st.markdown("**Simple, controlled, and accurate extraction from your Excel data**")
