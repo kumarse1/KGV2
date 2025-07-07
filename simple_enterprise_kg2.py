@@ -4,14 +4,6 @@ Fixed Simple Knowledge Graph - Controlled and Accurate
 Run: streamlit run simple_fixed_kg.py
 """
 
-# ========================================
-# 🔧 CONFIGURE YOUR LLM CREDENTIALS HERE
-# ========================================
-LLM_API_URL = "https://your-api-endpoint.com/v1/chat/completions"
-LLM_USERNAME = "your_username_here"
-LLM_PASSWORD = "your_password_here"
-# ========================================
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -26,6 +18,14 @@ import io
 
 # PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
 st.set_page_config(page_title="🔧 Fixed Knowledge Graph", layout="wide")
+
+# ========================================
+# 🔧 CONFIGURE YOUR LLM CREDENTIALS HERE
+# ========================================
+LLM_API_URL = "https://your-api-endpoint.com/v1/chat/completions"
+LLM_USERNAME = "your_username_here"
+LLM_PASSWORD = "your_password_here"
+# ========================================
 
 # Simple File Processor - CONTROLLED
 class ControlledFileProcessor:
