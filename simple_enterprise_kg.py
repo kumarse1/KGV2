@@ -47,17 +47,20 @@ class SimpleLLMClient:
         
         Text: {text}
         
-        Return JSON in this exact format:
+        You MUST respond with ONLY valid JSON in this exact format (no other text):
         {{
             "entities": [
-                {{"id": "unique_id", "label": "Name", "type": "person|system|location|organization", "properties": {{"key": "value"}}}}
+                {{"id": "unique_id", "label": "Name", "type": "person", "properties": {{"key": "value"}}}}
             ],
             "relationships": [
-                {{"source": "entity_id", "target": "entity_id", "type": "manages|depends_on|located_in|works_for", "properties": {{}}}}
+                {{"source": "entity_id", "target": "entity_id", "type": "manages", "properties": {{}}}}
             ]
         }}
         
-        Focus on: People, Systems, Applications, Locations, Departments and their relationships.
+        Entity types: person, system, application, location, organization
+        Relationship types: manages, depends_on, located_in, works_for, runs_on, uses
+        
+        IMPORTANT: Return ONLY the JSON object, no explanations or markdown.
         """
         
         try:
@@ -67,7 +70,7 @@ class SimpleLLMClient:
                 json={
                     "model": "gpt-3.5-turbo",
                     "messages": [
-                        {"role": "system", "content": "You are a knowledge graph expert. Return only valid JSON."},
+                        {"role": "system", "content": "You are a knowledge graph expert. You MUST respond with ONLY valid JSON, no other text."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,
@@ -76,28 +79,112 @@ class SimpleLLMClient:
                 timeout=30
             )
             
+            print(f"API Response Status: {response.status_code}")
+            
             if response.status_code == 200:
                 result = response.json()
                 content = result.get('choices', [{}])[0].get('message', {}).get('content', '{}')
+                
+                print(f"Raw LLM Response: {content[:200]}...")  # Debug output
+                
+                # Clean the response - remove markdown formatting if present
+                content = content.strip()
+                if content.startswith('```json'):
+                    content = content[7:]
+                if content.startswith('```'):
+                    content = content[3:]
+                if content.endswith('```'):
+                    content = content[:-3]
+                content = content.strip()
+                
+                # Try to parse JSON
                 try:
-                    return json.loads(content)
-                except:
+                    parsed_data = json.loads(content)
+                    
+                    # Validate the structure
+                    if 'entities' in parsed_data and 'relationships' in parsed_data:
+                        print(f"✅ Successfully parsed: {len(parsed_data['entities'])} entities, {len(parsed_data['relationships'])} relationships")
+                        return parsed_data
+                    else:
+                        print("❌ Invalid JSON structure - missing entities or relationships")
+                        return self._fallback_extraction(text)
+                        
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON parsing error: {e}")
+                    print(f"Raw content: {content}")
                     return self._fallback_extraction(text)
+                    
             else:
-                st.error(f"API Error: {response.status_code}")
+                print(f"❌ API Error: {response.status_code}")
+                print(f"Response: {response.text}")
                 return self._fallback_extraction(text)
                 
+        except requests.exceptions.Timeout:
+            print("❌ Request timeout")
+            return self._fallback_extraction(text)
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Request error: {e}")
+            return self._fallback_extraction(text)
         except Exception as e:
-            st.error(f"LLM Error: {str(e)}")
+            print(f"❌ Unexpected error: {e}")
             return self._fallback_extraction(text)
     
     def _fallback_extraction(self, text):
-        """Simple fallback extraction without LLM"""
+        """Enhanced fallback extraction without LLM"""
+        print("🔄 Using fallback extraction...")
+        
+        # Simple keyword-based extraction
+        entities = []
+        relationships = []
+        
+        # Extract potential entities from text
+        lines = text.split('\n')
+        entity_id_counter = 1
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Look for server/system patterns
+            if any(keyword in line.lower() for keyword in ['server', 'database', 'application', 'system']):
+                entity_id = f"system_{entity_id_counter}"
+                entities.append({
+                    "id": entity_id,
+                    "label": f"System from: {line[:30]}...",
+                    "type": "system",
+                    "properties": {"source": "fallback", "line": line}
+                })
+                entity_id_counter += 1
+            
+            # Look for people patterns
+            if any(keyword in line.lower() for keyword in ['admin', 'manager', 'user', 'owner']):
+                entity_id = f"person_{entity_id_counter}"
+                entities.append({
+                    "id": entity_id,
+                    "label": f"Person from: {line[:30]}...",
+                    "type": "person", 
+                    "properties": {"source": "fallback", "line": line}
+                })
+                entity_id_counter += 1
+        
+        # If no entities found, create sample ones
+        if not entities:
+            entities = [
+                {"id": "sample_system", "label": "Sample System", "type": "system", "properties": {"note": "LLM extraction failed"}},
+                {"id": "sample_person", "label": "Sample Person", "type": "person", "properties": {"note": "LLM extraction failed"}},
+                {"id": "sample_location", "label": "Sample Location", "type": "location", "properties": {"note": "LLM extraction failed"}}
+            ]
+            relationships = [
+                {"source": "sample_person", "target": "sample_system", "type": "manages", "properties": {}},
+                {"source": "sample_system", "target": "sample_location", "type": "located_in", "properties": {}}
+            ]
+        
+        print(f"✅ Fallback created: {len(entities)} entities, {len(relationships)} relationships")
+        
         return {
-            "entities": [
-                {"id": "sample_entity", "label": "Sample Entity", "type": "system", "properties": {"note": "LLM failed, using fallback"}}
-            ],
-            "relationships": []
+            "entities": entities,
+            "relationships": relationships
         }
 
 # Simple File Processor
