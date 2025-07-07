@@ -4,6 +4,14 @@ Simple Enterprise Knowledge Graph with LLM Basic Auth
 Run: streamlit run simple_enterprise_kg.py
 """
 
+# ========================================
+# 🔧 CONFIGURE YOUR LLM CREDENTIALS HERE
+# ========================================
+LLM_API_URL = "https://your-api-endpoint.com/v1/chat/completions"
+LLM_USERNAME = "your_username_here"
+LLM_PASSWORD = "your_password_here"
+# ========================================
+
 import streamlit as st
 import pandas as pd
 import requests
@@ -18,10 +26,11 @@ import io
 
 # Simple LLM Client with Basic Auth
 class SimpleLLMClient:
-    def __init__(self, api_url, username, password):
-        self.api_url = api_url
-        self.username = username
-        self.password = password
+    def __init__(self, api_url=None, username=None, password=None):
+        # Use hardcoded credentials if not provided
+        self.api_url = api_url or LLM_API_URL
+        self.username = username or LLM_USERNAME
+        self.password = password or LLM_PASSWORD
         
         # Setup basic auth
         credentials = f"{username}:{password}"
@@ -265,11 +274,20 @@ def main():
     if 'html_content' not in st.session_state:
         st.session_state.html_content = None
     
-    # Sidebar - LLM Configuration
+    # Sidebar - LLM Configuration (Optional Override)
     st.sidebar.header("🤖 LLM Configuration")
-    api_url = st.sidebar.text_input("API URL", value="https://api.openai.com/v1/chat/completions")
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
+    st.sidebar.info("✅ Credentials configured in code")
+    
+    # Optional override in UI
+    with st.sidebar.expander("🔧 Override Credentials (Optional)"):
+        api_url = st.text_input("API URL", value=LLM_API_URL)
+        username = st.text_input("Username", value=LLM_USERNAME)
+        password = st.text_input("Password", type="password", value=LLM_PASSWORD)
+    else:
+        # Use hardcoded credentials
+        api_url = LLM_API_URL
+        username = LLM_USERNAME  
+        password = LLM_PASSWORD
     
     use_mock = st.sidebar.checkbox("Use Mock Data (for testing)", value=False)
     
@@ -318,9 +336,9 @@ def main():
                 st.session_state.graph_data = mock_data
                 st.success("✅ Mock data loaded!")
             
-            elif api_url and username and password:
+            elif LLM_API_URL and LLM_USERNAME and LLM_PASSWORD:
                 with st.spinner("🧠 LLM is analyzing your data..."):
-                    llm_client = SimpleLLMClient(api_url, username, password)
+                    llm_client = SimpleLLMClient()  # Will use hardcoded credentials
                     extracted_data = llm_client.extract_entities_relationships(st.session_state.file_content)
                     
                     st.session_state.graph_data = extracted_data
