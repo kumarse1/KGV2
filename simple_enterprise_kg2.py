@@ -40,7 +40,6 @@ def extract_text_from_file(file):
 # 🤖 LLM Nodes
 # =======================
 def llm_extract_graph(text):
-    """LLM extracts structured nodes and edges"""
     prompt = f"""
 From the following document, extract entities and architecture relationships:
 
@@ -78,7 +77,6 @@ Return only JSON in the format:
     return json.loads(match.group()) if match else {"nodes": [], "edges": []}
 
 def llm_arch_summary(text):
-    """LLM provides a strategic summary of the architecture"""
     prompt = f"""
 Summarize this architecture:
 - Identify key components
@@ -107,7 +105,6 @@ Architecture:
 # =======================
 # 🔍 LangGraph Setup
 # =======================
-
 def build_graph_pipeline():
     g = StateGraph()
 
@@ -123,7 +120,6 @@ def build_graph_pipeline():
 
     g.set_entry_point("extract_text")
     g.add_edge("extract_text", "extract_kg")
-
     g.set_finish_point("extract_kg")
 
     return g.compile()
@@ -170,93 +166,51 @@ def show_graph(graph_data):
 # =======================
 # 🖼️ Streamlit UI
 # =======================
-st.title("🔗 Knowledge Graph POC (with LangGraph)")
-uploaded = st.file_uploader("📁 Upload Excel or Word Document", type=["xlsx", "docx"])
+def main():
+    st.title("🔗 Knowledge Graph POC (with LangGraph)")
+    uploaded = st.file_uploader("📁 Upload Excel or Word Document", type=["xlsx", "docx"], key="doc_upload")
 
-if uploaded:
-    with st.spinner("🔍 Processing through LangGraph pipeline..."):
-        graph_pipeline = build_graph_pipeline()
-        output = graph_pipeline.invoke({"file": uploaded})
-        kg = output["graph"]
-        text = extract_text_from_file(uploaded)
+    if uploaded:
+        with st.spinner("🔍 Processing through LangGraph pipeline..."):
+            graph_pipeline = build_graph_pipeline()
+            output = graph_pipeline.invoke({"file": uploaded})
+            kg = output["graph"]
+            text = extract_text_from_file(uploaded)
 
-    st.success("✅ Knowledge graph generated!")
-    show_graph(kg)
+        st.success("✅ Knowledge graph generated!")
+        show_graph(kg)
 
-    node_ids = [n['id'] for n in kg.get("nodes", [])]
-    selected_node = st.selectbox("🔍 Select a node to view details", node_ids)
+        node_ids = [n['id'] for n in kg.get("nodes", [])]
+        selected_node = st.selectbox("🔍 Select a node to view details", node_ids)
 
-    if selected_node:
-        node_info = next((n for n in kg["nodes"] if n["id"] == selected_node), None)
-        related_edges = [e for e in kg["edges"] if e["source"] == selected_node or e["target"] == selected_node]
+        if selected_node:
+            node_info = next((n for n in kg["nodes"] if n["id"] == selected_node), None)
+            related_edges = [e for e in kg["edges"] if e["source"] == selected_node or e["target"] == selected_node]
 
-        st.subheader(f"📌 Details for: {selected_node}")
-        if node_info:
-            st.write(f"**Type:** {node_info.get('type', 'Unknown')}")
-        st.write("**Connections:**")
-        for rel in related_edges:
-            direction = "→" if rel["source"] == selected_node else "←"
-            other = rel["target"] if rel["source"] == selected_node else rel["source"]
-            st.write(f"{selected_node} {direction} {rel['type']} {direction} {other}")
+            st.subheader(f"📌 Details for: {selected_node}")
+            if node_info:
+                st.write(f"**Type:** {node_info.get('type', 'Unknown')}")
+            st.write("**Connections:**")
+            for rel in related_edges:
+                direction = "→" if rel["source"] == selected_node else "←"
+                other = rel["target"] if rel["source"] == selected_node else rel["source"]
+                st.write(f"{selected_node} {direction} {rel['type']} {direction} {other}")
 
-    if st.button("🧠 Generate Strategic Summary"):
-        with st.spinner("Calling LLM for summary..."):
-            summary = llm_arch_summary(text)
-            st.subheader("🧠 Strategic Architecture Summary")
-            st.markdown(summary)
+        if st.button("🧠 Generate Strategic Summary"):
+            with st.spinner("Calling LLM for summary..."):
+                summary = llm_arch_summary(text)
+                st.subheader("🧠 Strategic Architecture Summary")
+                st.markdown(summary)
 
-    st.download_button("📥 Download Graph as JSON", json.dumps(kg, indent=2), file_name="knowledge_graph.json")
-# langgraph_poc.py
+        st.download_button("📥 Download Graph as JSON", json.dumps(kg, indent=2), file_name="knowledge_graph.json")
 
-# [Previous content unchanged above this point...]
+        # Chat interface
+        st.markdown("---")
+        st.subheader("💬 Ask Questions about the Architecture")
+        user_question = st.text_input("Type your question:", placeholder="e.g., What are the critical components?")
 
-# =======================
-# 🖼️ Streamlit UI
-# =======================
-st.title("🔗 Knowledge Graph POC (with LangGraph)")
-uploaded = st.file_uploader("📁 Upload Excel or Word Document", type=["xlsx", "docx"])
-
-if uploaded:
-    with st.spinner("🔍 Processing through LangGraph pipeline..."):
-        graph_pipeline = build_graph_pipeline()
-        output = graph_pipeline.invoke({"file": uploaded})
-        kg = output["graph"]
-        text = extract_text_from_file(uploaded)
-
-    st.success("✅ Knowledge graph generated!")
-    show_graph(kg)
-
-    node_ids = [n['id'] for n in kg.get("nodes", [])]
-    selected_node = st.selectbox("🔍 Select a node to view details", node_ids)
-
-    if selected_node:
-        node_info = next((n for n in kg["nodes"] if n["id"] == selected_node), None)
-        related_edges = [e for e in kg["edges"] if e["source"] == selected_node or e["target"] == selected_node]
-
-        st.subheader(f"📌 Details for: {selected_node}")
-        if node_info:
-            st.write(f"**Type:** {node_info.get('type', 'Unknown')}")
-        st.write("**Connections:**")
-        for rel in related_edges:
-            direction = "→" if rel["source"] == selected_node else "←"
-            other = rel["target"] if rel["source"] == selected_node else rel["source"]
-            st.write(f"{selected_node} {direction} {rel['type']} {direction} {other}")
-
-    if st.button("🧠 Generate Strategic Summary"):
-        with st.spinner("Calling LLM for summary..."):
-            summary = llm_arch_summary(text)
-            st.subheader("🧠 Strategic Architecture Summary")
-            st.markdown(summary)
-
-    st.download_button("📥 Download Graph as JSON", json.dumps(kg, indent=2), file_name="knowledge_graph.json")
-
-    # Chat interface
-    st.markdown("---")
-    st.subheader("💬 Ask Questions about the Architecture")
-    user_question = st.text_input("Type your question:", placeholder="e.g., What are the critical components?")
-
-    if user_question:
-        prompt = f"""
+        if user_question:
+            prompt = f"""
 Answer the following question based on this architecture document:
 
 Document Text:
@@ -266,20 +220,23 @@ Question: {user_question}
 
 Respond concisely and insightfully.
 """
-        headers = {
-            "Authorization": f"Basic {get_basic_auth()}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "gpt-3.5-turbo",
-            "messages": [
-                {"role": "system", "content": "You are an architecture expert assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.4,
-            "max_tokens": 400
-        }
-        with st.spinner("Thinking..."):
-            response = requests.post(LLM_API_URL, headers=headers, json=payload)
-            answer = response.json()["choices"][0]["message"]["content"]
-            st.markdown(f"**Answer:**\n\n{answer}")
+            headers = {
+                "Authorization": f"Basic {get_basic_auth()}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are an architecture expert assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.4,
+                "max_tokens": 400
+            }
+            with st.spinner("Thinking..."):
+                response = requests.post(LLM_API_URL, headers=headers, json=payload)
+                answer = response.json()["choices"][0]["message"]["content"]
+                st.markdown(f"**Answer:**\n\n{answer}")
+
+if __name__ == "__main__":
+    main()
