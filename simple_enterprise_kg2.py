@@ -11,6 +11,7 @@ from pyvis.network import Network
 import os
 import uuid
 import tempfile
+import time
 
 # ========================================
 # 🔧 CONFIGURE YOUR LLM CREDENTIALS HERE
@@ -974,16 +975,78 @@ def main():
                 height
             )
             
-            # Save to temporary file and display
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as tmp_file:
-                net.save_graph(tmp_file.name)
-                with open(tmp_file.name, 'r', encoding='utf-8') as f:
-                    html_content = f.read()
+            # Generate HTML content directly without file operations
+            try:
+                # Try to get HTML content directly from pyvis
+                html_content = net.generate_html()
                 st.components.v1.html(html_content, height=height+50)
-                os.unlink(tmp_file.name)
+            except AttributeError:
+                # Fallback: Use a more robust file handling approach
+                import time
+                import uuid
+                
+                # Create unique filename to avoid conflicts
+                unique_id = str(uuid.uuid4())[:8]
+                temp_filename = f"temp_graph_{unique_id}_{int(time.time())}.html"
+                temp_path = os.path.join(tempfile.gettempdir(), temp_filename)
+                
+                try:
+                    # Save graph
+                    net.save_graph(temp_path)
+                    
+                    # Read content with retry mechanism
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            time.sleep(0.1)  # Small delay
+                            with open(temp_path, 'r', encoding='utf-8') as f:
+                                html_content = f.read()
+                            break
+                        except (PermissionError, OSError) as file_error:
+                            if attempt == max_retries - 1:
+                                raise file_error
+                            time.sleep(0.5)  # Wait before retry
+                    
+                    # Display the graph
+                    st.components.v1.html(html_content, height=height+50)
+                    
+                finally:
+                    # Clean up with retry mechanism
+                    for cleanup_attempt in range(3):
+                        try:
+                            if os.path.exists(temp_path):
+                                time.sleep(0.2)  # Give time for file to be released
+                                os.unlink(temp_path)
+                            break
+                        except (PermissionError, OSError):
+                            if cleanup_attempt < 2:
+                                time.sleep(1)  # Wait longer before retry
+                            # If cleanup fails, log but don't crash
+                            pass
             
         except Exception as e:
             st.error(f"❌ Error creating graph: {str(e)}")
+            
+            # Provide fallback - show graph data as text
+            st.info("💡 Displaying graph data as text instead:")
+            
+            entities = st.session_state.graph_data['entities']
+            relationships = st.session_state.graph_data['relationships']
+            
+            st.write("**🔹 Entities:**")
+            for entity in entities[:10]:  # Show first 10
+                st.write(f"• {entity['label']} ({entity['type']})")
+            if len(entities) > 10:
+                st.write(f"... and {len(entities) - 10} more entities")
+            
+            st.write("**🔗 Relationships:**")
+            for rel in relationships[:10]:  # Show first 10
+                source_label = next((e['label'] for e in entities if e['id'] == rel['source']), rel['source'])
+                target_label = next((e['label'] for e in entities if e['id'] == rel['target']), rel['target'])
+                st.write(f"• {source_label} → {rel['type']} → {target_label}")
+            if len(relationships) > 10:
+                st.write(f"... and {len(relationships) - 10} more relationships")
+            
             st.info("💡 Try installing required packages: pip install pyvis networkx")
         
         # Statistics
