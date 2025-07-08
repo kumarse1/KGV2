@@ -11,8 +11,9 @@ st.set_page_config(page_title="🔗 Knowledge Graph System", layout="wide")
 # ========================================
 # 🔧 LLM CONFIGURATION
 # ========================================
-LLM_API_URL = "https://api.openai.com/v1/chat/completions"
-LLM_API_KEY = "your_api_key_here"  # Replace with your actual API key
+LLM_API_URL = "https://your-llm-endpoint.com/v1/chat/completions"
+LLM_USERNAME = "your_username_here"  # Replace with your LLM username
+LLM_PASSWORD = "your_password_here"  # Replace with your LLM password
 
 class EnhancedKnowledgeGraph:
     """Enhanced knowledge graph with detailed entity extraction and relationships"""
@@ -37,7 +38,7 @@ class EnhancedKnowledgeGraph:
             'Location': '📍'
         }
         self.df = None
-        self.use_llm = LLM_API_KEY != "your_api_key_here"
+        self.use_llm = LLM_USERNAME != "your_username_here" and LLM_PASSWORD != "your_password_here"
     
     def process_data(self, df):
         """Process data with enhanced entity extraction"""
@@ -257,7 +258,7 @@ class EnhancedKnowledgeGraph:
             """
             
             headers = {
-                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Authorization": f"Basic {self._get_basic_auth()}",
                 "Content-Type": "application/json"
             }
             
@@ -411,7 +412,7 @@ class EnhancedKnowledgeGraph:
             """
             
             headers = {
-                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Authorization": f"Basic {self._get_basic_auth()}",
                 "Content-Type": "application/json"
             }
             
@@ -437,6 +438,13 @@ class EnhancedKnowledgeGraph:
             pass
         
         return []
+    
+    def _get_basic_auth(self):
+        """Generate basic auth header"""
+        import base64
+        credentials = f"{LLM_USERNAME}:{LLM_PASSWORD}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        return encoded_credentials
     
     def get_network_view(self):
         """Get network view for display"""
@@ -485,6 +493,13 @@ class EnhancedChatEngine:
                 return enhanced_answer
             except:
                 return structured_answer
+    
+    def _get_basic_auth(self):
+        """Generate basic auth header"""
+        import base64
+        credentials = f"{LLM_USERNAME}:{LLM_PASSWORD}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        return encoded_credentials
         
         return structured_answer or self._provide_suggestions()
     
@@ -763,7 +778,7 @@ class EnhancedChatEngine:
             """
             
             headers = {
-                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Authorization": f"Basic {self._get_basic_auth()}",
                 "Content-Type": "application/json"
             }
             
@@ -889,11 +904,11 @@ def main():
         st.header("⚙️ Configuration")
         
         # LLM Status
-        llm_status = "🟢 Active" if LLM_API_KEY != "your_api_key_here" else "🔴 Configure API Key"
+        llm_status = "🟢 Active" if LLM_USERNAME != "your_username_here" and LLM_PASSWORD != "your_password_here" else "🔴 Configure Credentials"
         st.write(f"**LLM Enhancement:** {llm_status}")
         
-        if llm_status == "🔴 Configure API Key":
-            st.info("💡 Configure LLM_API_KEY in the code for enhanced insights")
+        if llm_status == "🔴 Configure Credentials":
+            st.info("💡 Configure LLM_USERNAME and LLM_PASSWORD in the code for enhanced insights")
         
         st.divider()
         
@@ -1071,7 +1086,7 @@ def main():
         if st.session_state.kg.use_llm:
             st.success("🧠 **AI Enhancement Active** - Get strategic insights with your technical analysis")
         else:
-            st.info("⚙️ **Configure LLM API Key** for enhanced strategic insights")
+            st.info("⚙️ **Configure LLM Credentials** for enhanced strategic insights")
         
         # Sample question
         if st.button("💡 What are the risks in our architecture?"):
@@ -1091,7 +1106,7 @@ def main():
                     st.markdown(answer)
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
-                    st.info("💡 Try rephrasing your question or check your LLM configuration")
+                    st.info("💡 Try rephrasing your question or check your LLM credentials")
         
         # Quick action buttons
         st.subheader("⚡ Quick Analysis")
