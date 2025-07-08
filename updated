@@ -60,31 +60,77 @@ Document: {text[:2000]}"""
     
     try:
         headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
-        payload = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 600}
-        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
         
-        if response.status_code != 200:
-            st.error(f"LLM API error: {response.status_code} - {response.text}")
-            return {"nodes": [], "edges": []}
+        # Try different payload formats (including Llama-specific)
+        payload_options = [
+            # Format 1: Llama/Ollama format
+            {"model": "llama", "prompt": prompt, "stream": False, "options": {"temperature": 0.3, "num_predict": 600}},
             
-        content = response.json()["choices"][0]["message"]["content"]
-        st.write("**LLM Response:**", content)  # Debug output
+            # Format 2: Standard Llama API
+            {"inputs": prompt, "parameters": {"temperature": 0.3, "max_new_tokens": 600}},
+            
+            # Format 3: OpenAI-compatible format
+            {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 600},
+            
+            # Format 4: Simple Llama format
+            {"prompt": prompt, "temperature": 0.3, "max_tokens": 600},
+            
+            # Format 5: Hugging Face format
+            {"inputs": prompt, "options": {"wait_for_model": True}, "parameters": {"temperature": 0.3, "max_length": 600}}
+        ]
         
-        # Try to extract JSON
-        match = re.search(r'{.*}', content, re.DOTALL)
-        if match:
-            try:
-                result = json.loads(match.group())
-                st.write("**Parsed JSON:**", result)  # Debug output
-                return result
-            except json.JSONDecodeError as e:
-                st.error(f"JSON parsing error: {e}")
-                st.write("**Raw content:**", content)
-                return {"nodes": [], "edges": []}
-        else:
-            st.error("No JSON found in LLM response")
-            st.write("**Raw content:**", content)
-            return {"nodes": [], "edges": []}
+        for i, payload in enumerate(payload_options):
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                # Try different response formats
+                try:
+                    resp_json = response.json()
+                    
+                    # Try different response formats (including Llama)
+                    if "choices" in resp_json:
+                        content = resp_json["choices"][0]["message"]["content"]
+                    # Llama/Ollama response format
+                    elif "response" in resp_json:
+                        content = resp_json["response"]
+                    # Direct text response
+                    elif "text" in resp_json:
+                        content = resp_json["text"]
+                    # Generated text field
+                    elif "generated_text" in resp_json:
+                        content = resp_json["generated_text"]
+                    # Hugging Face format
+                    elif isinstance(resp_json, list) and len(resp_json) > 0:
+                        content = resp_json[0].get("generated_text", str(resp_json))
+                    else:
+                        content = str(resp_json)
+                    
+                    st.write(f"**Success with payload format {i+1}**")
+                    st.write("**LLM Response:**", content)
+                    
+                    # Parse JSON from response
+                    match = re.search(r'{.*}', content, re.DOTALL)
+                    if match:
+                        try:
+                            result = json.loads(match.group())
+                            st.write("**Parsed JSON:**", result)
+                            return result
+                        except json.JSONDecodeError as e:
+                            st.error(f"JSON parsing error: {e}")
+                            return {"nodes": [], "edges": []}
+                    else:
+                        st.error("No JSON found in response")
+                        return {"nodes": [], "edges": []}
+                        
+                except Exception as e:
+                    st.error(f"Response parsing error: {e}")
+                    continue
+            else:
+                st.write(f"**Payload format {i+1} failed:** {response.status_code} - {response.text}")
+                continue
+        
+        st.error("All payload formats failed")
+        return {"nodes": [], "edges": []}
             
     except Exception as e:
         st.error(f"LLM call failed: {e}")
