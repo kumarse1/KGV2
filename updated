@@ -108,18 +108,72 @@ Document: {text[:2000]}"""
                     st.write(f"**Success with payload format {i+1}**")
                     st.write("**LLM Response:**", content)
                     
-                    # Parse JSON from response
-                    match = re.search(r'{.*}', content, re.DOTALL)
-                    if match:
-                        try:
-                            result = json.loads(match.group())
-                            st.write("**Parsed JSON:**", result)
-                            return result
-                        except json.JSONDecodeError as e:
-                            st.error(f"JSON parsing error: {e}")
-                            return {"nodes": [], "edges": []}
+                    # Enhanced JSON extraction for Llama responses
+                    def extract_json_from_text(text):
+                        # Clean the text
+                        text = text.strip()
+                        
+                        # Try multiple JSON extraction methods
+                        json_patterns = [
+                            r'```json\s*(\{.*?\})\s*```',  # JSON in code blocks
+                            r'```\s*(\{.*?\})\s*```',      # JSON in any code block
+                            r'(\{[^{}]*"nodes"[^{}]*\})',   # Look for nodes pattern
+                            r'(\{.*?"nodes".*?\})',         # Broader nodes pattern
+                            r'(\{.*\})',                    # Any JSON-like structure
+                        ]
+                        
+                        for pattern in json_patterns:
+                            matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+                            for match in matches:
+                                try:
+                                    # Clean up common issues
+                                    cleaned = match.strip()
+                                    # Fix trailing commas
+                                    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
+                                    # Fix single quotes to double quotes
+                                    cleaned = re.sub(r"'([^']*)':", r'"\1":', cleaned)
+                                    
+                                    result = json.loads(cleaned)
+                                    if isinstance(result, dict) and ("nodes" in result or "edges" in result):
+                                        return result
+                                except:
+                                    continue
+                        
+                        # If no JSON found, try to extract entities manually
+                        st.write("**Attempting manual extraction...**")
+                        
+                        # Look for entity mentions
+                        lines = text.split('\n')
+                        nodes = []
+                        edges = []
+                        
+                        for line in lines:
+                            line = line.strip()
+                            # Look for entity patterns
+                            if any(word in line.lower() for word in ['application', 'database', 'component', 'system']):
+                                # Extract potential entity name
+                                words = line.split()
+                                for word in words:
+                                    if len(word) > 3 and word.isalnum():
+                                        nodes.append({"id": word, "type": "Component"})
+                                        if len(nodes) >= 3:  # Limit to prevent too many
+                                            break
+                        
+                        # Create some basic relationships if we have nodes
+                        if len(nodes) >= 2:
+                            edges.append({"source": nodes[0]["id"], "target": nodes[1]["id"], "type": "USES"})
+                        
+                        return {"nodes": nodes[:5], "edges": edges[:3]} if nodes else None
+                    
+                    # Try to extract JSON
+                    result = extract_json_from_text(content)
+                    
+                    if result:
+                        st.write("**Extracted JSON:**", result)
+                        return result
                     else:
-                        st.error("No JSON found in response")
+                        st.error("Could not extract valid JSON from response")
+                        st.write("**Raw response for debugging:**", content[:500])
                         return {"nodes": [], "edges": []}
                         
                 except Exception as e:
