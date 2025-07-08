@@ -62,10 +62,32 @@ Document: {text[:2000]}"""
         headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
         payload = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 600}
         response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code != 200:
+            st.error(f"LLM API error: {response.status_code} - {response.text}")
+            return {"nodes": [], "edges": []}
+            
         content = response.json()["choices"][0]["message"]["content"]
+        st.write("**LLM Response:**", content)  # Debug output
+        
+        # Try to extract JSON
         match = re.search(r'{.*}', content, re.DOTALL)
-        return json.loads(match.group()) if match else {"nodes": [], "edges": []}
-    except:
+        if match:
+            try:
+                result = json.loads(match.group())
+                st.write("**Parsed JSON:**", result)  # Debug output
+                return result
+            except json.JSONDecodeError as e:
+                st.error(f"JSON parsing error: {e}")
+                st.write("**Raw content:**", content)
+                return {"nodes": [], "edges": []}
+        else:
+            st.error("No JSON found in LLM response")
+            st.write("**Raw content:**", content)
+            return {"nodes": [], "edges": []}
+            
+    except Exception as e:
+        st.error(f"LLM call failed: {e}")
         return {"nodes": [], "edges": []}
 
 # =======================
@@ -78,6 +100,9 @@ class GraphState(TypedDict):
 
 def extract_step(state: GraphState):
     text = extract_text_from_file(state["file"])
+    st.write("**Extracted Text Length:**", len(text))  # Debug
+    if text:
+        st.write("**Text Sample:**", text[:200])  # Debug
     return {"text": text}
 
 def extract_kg_step(state: GraphState):
