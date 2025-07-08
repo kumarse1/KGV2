@@ -1,1250 +1,1148 @@
 import streamlit as st
-
-st.set_page_config(page_title="📊 Complete Knowledge Graph System", layout="wide")
-
 import pandas as pd
-import requests
-import base64
-import json
 import networkx as nx
-from pyvis.network import Network
-import os
-import uuid
-import tempfile
-import time
+import json
+from collections import defaultdict
+import requests
+import re
+
+st.set_page_config(page_title="🔗 Knowledge Graph System", layout="wide")
 
 # ========================================
-# 🔧 CONFIGURE YOUR LLM CREDENTIALS HERE
+# 🔧 LLM CONFIGURATION
 # ========================================
-LLM_API_URL = "https://your-api-endpoint.com/v1/chat/completions"
-LLM_USERNAME = "your_username_here"
-LLM_PASSWORD = "your_password_here"
-# ========================================
+LLM_API_URL = "https://api.openai.com/v1/chat/completions"
+LLM_API_KEY = "your_api_key_here"  # Replace with your actual API key
 
-class DirectExcelMapper:
-    """Directly map Excel data to knowledge graph without LLM guessing"""
+class EnhancedKnowledgeGraph:
+    """Enhanced knowledge graph with detailed entity extraction and relationships"""
     
     def __init__(self):
         self.entities = {}
         self.relationships = []
+        self.entity_types = {
+            'Application': '🔵',
+            'Database': '🟢', 
+            'Server': '🟡',
+            'Service': '🟣',
+            'Component': '🔴',
+            'Security Function': '🟠',
+            'Business Service': '🟤',
+            'Environment': '⚫',
+            'Data': '🔶',
+            'Queue': '🔷',
+            'Software': '🟦',
+            'Flow': '⭕',
+            'Person': '👤',
+            'Location': '📍'
+        }
+        self.df = None
+        self.use_llm = LLM_API_KEY != "your_api_key_here"
     
-    def process_excel(self, df):
-        """Process Excel data directly - each row becomes entities with relationships"""
+    def process_data(self, df):
+        """Process data with enhanced entity extraction"""
+        self.df = df
         
-        st.write("### 📋 Excel Data Analysis")
-        st.write(f"**Rows:** {len(df)} | **Columns:** {len(df.columns)}")
-        
-        # Show column mapping options
-        st.write("**Your Columns:**")
-        for i, col in enumerate(df.columns):
-            st.write(f"{i+1}. `{col}`")
-        
-        st.write("---")
-        
-        # Let user see the data
-        with st.expander("🔍 View Your Excel Data"):
-            st.dataframe(df.head(10))
-        
-        # Process each row as a component
-        components_created = 0
-        relationships_created = 0
-        
+        # First pass: Create basic entities
         for idx, row in df.iterrows():
             if idx >= 50:  # Reasonable limit
-                st.warning(f"⚠️ Processing limited to first 50 rows to maintain performance")
                 break
-                
-            # Create main component from this row
-            component_id = f"component_{idx}"
-            component_name = self._extract_component_name(row, df.columns)
-            component_type = self._determine_component_type(row, df.columns)
             
-            # Extract all properties from this row
-            properties = {}
-            for col in df.columns:
-                if pd.notna(row[col]) and str(row[col]).strip():
-                    clean_key = col.replace(' ', '_').replace('-', '_').lower()
-                    properties[clean_key] = str(row[col]).strip()
+            # Extract main entity
+            entity_name = self._get_entity_name(row)
+            entity_type = self._get_enhanced_entity_type(row)
             
-            # Add the main component
-            self.entities[component_id] = {
-                "id": component_id,
-                "label": component_name,
-                "type": component_type,
-                "properties": properties,
-                "excel_row": idx + 1
+            self.entities[entity_name] = {
+                'name': entity_name,
+                'type': entity_type,
+                'properties': self._extract_detailed_properties(row),
+                'row_index': idx,
+                'description': self._generate_description(row)
             }
-            components_created += 1
+        
+        # Second pass: Create relationships with LLM enhancement
+        for idx, row in df.iterrows():
+            if idx >= 50:
+                break
             
-            # Create relationships based on column content
-            relationships_created += self._create_relationships_from_row(component_id, row, df.columns, idx)
-        
-        st.success(f"✅ **Direct Mapping Complete:** {components_created} components, {relationships_created} relationships")
-        return self._prepare_graph_data()
+            entity_name = self._get_entity_name(row)
+            
+            # Create basic relationships
+            self._create_basic_relationships(entity_name, row)
+            
+            # Enhance with LLM if available
+            if self.use_llm:
+                self._enhance_relationships_with_llm(entity_name, row)
     
-    def _extract_component_name(self, row, columns):
-        """Extract the best name for this component"""
-        # Look for common name columns
-        name_columns = [col for col in columns if any(keyword in col.lower() 
-                       for keyword in ['name', 'title', 'label', 'component', 'asset', 'system', 'application'])]
+    def _get_entity_name(self, row):
+        """Extract entity name with priority for meaningful names"""
+        # Priority columns for names
+        priority_columns = ['name', 'title', 'system', 'application', 'component', 'service']
         
-        for col in name_columns:
-            if pd.notna(row[col]) and str(row[col]).strip():
-                return str(row[col]).strip()
+        for priority in priority_columns:
+            matching_cols = [col for col in self.df.columns if priority in col.lower()]
+            for col in matching_cols:
+                if pd.notna(row[col]) and str(row[col]).strip():
+                    return str(row[col]).strip()
         
-        # Fallback: use first non-empty column
-        for col in columns:
+        # Fallback to first meaningful column
+        for col in self.df.columns:
             if pd.notna(row[col]) and str(row[col]).strip():
                 value = str(row[col]).strip()
-                if len(value) > 1:  # Avoid single character names
+                if len(value) > 2 and not value.isdigit():
                     return value
         
-        return f"Component {row.name + 1}"
+        return f"Entity_{row.name}"
     
-    def _determine_component_type(self, row, columns):
-        """Determine component type from row data"""
-        row_text = " ".join([str(row[col]) for col in columns if pd.notna(row[col])]).lower()
+    def _get_enhanced_entity_type(self, row):
+        """Enhanced entity type detection"""
+        row_text = ' '.join([str(val) for val in row.values if pd.notna(val)]).lower()
         
-        # Application patterns
-        if any(keyword in row_text for keyword in ['application', 'app', 'software', 'program', 'tool']):
-            return 'application'
-        # Server patterns
-        elif any(keyword in row_text for keyword in ['server', 'host', 'machine', 'vm', 'virtual']):
-            return 'server'
-        # Database patterns
-        elif any(keyword in row_text for keyword in ['database', 'db', 'data', 'sql', 'oracle', 'mysql']):
-            return 'database'
-        # Network patterns
-        elif any(keyword in row_text for keyword in ['network', 'router', 'switch', 'firewall', 'load balancer']):
-            return 'network'
-        # Service patterns
-        elif any(keyword in row_text for keyword in ['service', 'api', 'interface', 'endpoint']):
-            return 'service'
-        # Person patterns
-        elif any(keyword in row_text for keyword in ['admin', 'manager', 'user', 'owner', 'analyst', 'engineer']):
-            return 'person'
-        # Location patterns
-        elif any(keyword in row_text for keyword in ['datacenter', 'office', 'location', 'site', 'building']):
-            return 'location'
-        # Default
-        else:
-            return 'component'
+        # Detailed type matching based on your image
+        type_patterns = {
+            'Application': ['application', 'app', 'system', 'portal', 'platform'],
+            'Database': ['database', 'db', 'sql', 'oracle', 'mysql', 'postgres', 'data store'],
+            'Server': ['server', 'host', 'machine', 'vm', 'instance'],
+            'Service': ['service', 'api', 'endpoint', 'interface'],
+            'Component': ['component', 'module', 'library', 'framework'],
+            'Security Function': ['security', 'auth', 'firewall', 'encryption', 'ssl'],
+            'Business Service': ['business', 'process', 'workflow', 'function'],
+            'Environment': ['environment', 'env', 'staging', 'production', 'dev'],
+            'Data': ['data', 'dataset', 'file', 'document', 'record'],
+            'Queue': ['queue', 'message', 'topic', 'stream', 'event'],
+            'Software': ['software', 'tool', 'utility', 'program'],
+            'Flow': ['flow', 'pipeline', 'process flow', 'workflow'],
+            'Person': ['person', 'user', 'admin', 'manager', 'owner', 'analyst'],
+            'Location': ['location', 'datacenter', 'site', 'office', 'region']
+        }
+        
+        for entity_type, patterns in type_patterns.items():
+            if any(pattern in row_text for pattern in patterns):
+                return entity_type
+        
+        return 'Component'  # Default
     
-    def _create_relationships_from_row(self, component_id, row, columns, row_idx):
-        """Create relationships based on column content"""
-        relationships_count = 0
+    def _extract_detailed_properties(self, row):
+        """Extract detailed properties for entities"""
+        properties = {}
         
-        # Look for relationship indicators in columns
-        for col in columns:
-            if pd.notna(row[col]) and str(row[col]).strip():
-                col_lower = col.lower()
+        for col in self.df.columns:
+            if pd.notna(row[col]):
+                key = col.strip()
                 value = str(row[col]).strip()
                 
-                # Skip if it's the component's own name
-                if value == self.entities[component_id]['label']:
-                    continue
-                
-                # Management relationships
-                if any(keyword in col_lower for keyword in ['owner', 'manager', 'admin', 'responsible']):
-                    person_id = f"person_{value.replace(' ', '_').lower()}"
-                    if person_id not in self.entities:
-                        self.entities[person_id] = {
-                            "id": person_id,
-                            "label": value,
-                            "type": "person",
-                            "properties": {"role": "Manager/Owner", "source": f"Row {row_idx + 1}"},
-                            "excel_row": f"Derived from row {row_idx + 1}"
-                        }
-                    
-                    self.relationships.append({
-                        "source": person_id,
-                        "target": component_id,
-                        "type": "manages",
-                        "properties": {"description": f"Manages {self.entities[component_id]['label']}", "source_column": col}
-                    })
-                    relationships_count += 1
-                
-                # Location relationships
-                elif any(keyword in col_lower for keyword in ['location', 'site', 'datacenter', 'environment']):
-                    location_id = f"location_{value.replace(' ', '_').lower()}"
-                    if location_id not in self.entities:
-                        self.entities[location_id] = {
-                            "id": location_id,
-                            "label": value,
-                            "type": "location",
-                            "properties": {"type": "Location", "source": f"Row {row_idx + 1}"},
-                            "excel_row": f"Derived from row {row_idx + 1}"
-                        }
-                    
-                    self.relationships.append({
-                        "source": component_id,
-                        "target": location_id,
-                        "type": "located_in",
-                        "properties": {"description": f"Located in {value}", "source_column": col}
-                    })
-                    relationships_count += 1
-                
-                # Department relationships
-                elif any(keyword in col_lower for keyword in ['department', 'dept', 'team', 'group', 'division']):
-                    dept_id = f"dept_{value.replace(' ', '_').lower()}"
-                    if dept_id not in self.entities:
-                        self.entities[dept_id] = {
-                            "id": dept_id,
-                            "label": value,
-                            "type": "organization",
-                            "properties": {"type": "Department", "source": f"Row {row_idx + 1}"},
-                            "excel_row": f"Derived from row {row_idx + 1}"
-                        }
-                    
-                    self.relationships.append({
-                        "source": component_id,
-                        "target": dept_id,
-                        "type": "belongs_to",
-                        "properties": {"description": f"Belongs to {value}", "source_column": col}
-                    })
-                    relationships_count += 1
+                # Categorize properties
+                if any(word in key.lower() for word in ['tech', 'technology', 'stack']):
+                    properties['technology'] = value
+                elif any(word in key.lower() for word in ['owner', 'manager', 'responsible']):
+                    properties['owner'] = value
+                elif any(word in key.lower() for word in ['location', 'site', 'datacenter']):
+                    properties['location'] = value
+                elif any(word in key.lower() for word in ['env', 'environment']):
+                    properties['environment'] = value
+                elif any(word in key.lower() for word in ['critical', 'importance', 'priority']):
+                    properties['criticality'] = value
+                elif any(word in key.lower() for word in ['status', 'state']):
+                    properties['status'] = value
+                else:
+                    properties[key.lower().replace(' ', '_')] = value
         
-        return relationships_count
+        return properties
     
-    def _prepare_graph_data(self):
-        """Prepare data for graph generation"""
-        return {
-            "entities": list(self.entities.values()),
-            "relationships": self.relationships
-        }
-
-class ExcelChatEngine:
-    """Chat engine to answer questions about the Excel-based knowledge graph"""
+    def _generate_description(self, row):
+        """Generate entity description"""
+        properties = self._extract_detailed_properties(row)
+        
+        desc_parts = []
+        if 'technology' in properties:
+            desc_parts.append(f"Uses: {properties['technology']}")
+        if 'owner' in properties:
+            desc_parts.append(f"Managed by: {properties['owner']}")
+        if 'location' in properties:
+            desc_parts.append(f"Located in: {properties['location']}")
+        
+        return " | ".join(desc_parts) if desc_parts else "System component"
     
-    def __init__(self, entities, relationships, original_df):
-        self.entities = {e['id']: e for e in entities}
-        self.relationships = relationships
-        self.df = original_df
+    def _create_basic_relationships(self, entity_name, row):
+        """Create basic relationships from data"""
+        properties = self._extract_detailed_properties(row)
         
-        # Create lookup indices for fast searching
-        self.entity_by_name = {}
-        self.entity_by_type = {}
-        
-        for entity in entities:
-            # Name lookup (case-insensitive)
-            name_key = entity['label'].lower()
-            self.entity_by_name[name_key] = entity['id']
+        # Management relationships
+        if 'owner' in properties:
+            owner = properties['owner']
+            if owner not in self.entities:
+                self.entities[owner] = {
+                    'name': owner,
+                    'type': 'Person',
+                    'properties': {'role': 'Manager/Owner'},
+                    'description': f"Manages {entity_name}"
+                }
             
-            # Type lookup
-            entity_type = entity.get('type', 'unknown')
-            if entity_type not in self.entity_by_type:
-                self.entity_by_type[entity_type] = []
-            self.entity_by_type[entity_type].append(entity['id'])
+            self.relationships.append({
+                'source': owner,
+                'target': entity_name,
+                'type': 'MANAGES',
+                'description': f"{owner} manages {entity_name}",
+                'strength': 'strong'
+            })
+        
+        # Location relationships
+        if 'location' in properties:
+            location = properties['location']
+            if location not in self.entities:
+                self.entities[location] = {
+                    'name': location,
+                    'type': 'Location',
+                    'properties': {'type': 'Physical Location'},
+                    'description': f"Physical location: {location}"
+                }
+            
+            self.relationships.append({
+                'source': entity_name,
+                'target': location,
+                'type': 'LOCATED_IN',
+                'description': f"{entity_name} is located in {location}",
+                'strength': 'medium'
+            })
+        
+        # Technology relationships
+        if 'technology' in properties:
+            techs = [tech.strip() for tech in properties['technology'].split(',')]
+            for tech in techs:
+                if tech and len(tech) > 2:
+                    tech_clean = tech.strip()
+                    if tech_clean not in self.entities:
+                        self.entities[tech_clean] = {
+                            'name': tech_clean,
+                            'type': 'Software',
+                            'properties': {'category': 'Technology'},
+                            'description': f"Technology: {tech_clean}"
+                        }
+                    
+                    self.relationships.append({
+                        'source': entity_name,
+                        'target': tech_clean,
+                        'type': 'USES',
+                        'description': f"{entity_name} uses {tech_clean}",
+                        'strength': 'medium'
+                    })
+    
+    def _enhance_relationships_with_llm(self, entity_name, row):
+        """Use LLM to discover additional relationships"""
+        if not self.use_llm:
+            return
+            
+        try:
+            # Prepare context for LLM
+            entity_info = f"Entity: {entity_name}\nType: {self.entities[entity_name]['type']}\n"
+            entity_info += f"Properties: {self.entities[entity_name]['properties']}\n"
+            
+            prompt = f"""
+            Based on this entity information, identify potential relationships and components:
+            
+            {entity_info}
+            
+            Please identify:
+            1. What components this entity might contain (SUB_COMPONENT)
+            2. What it might depend on (DEPENDS_ON)
+            3. What flows or data it processes (PROCESSES)
+            4. What it supports or enables (SUPPORTS)
+            
+            Return only a JSON list of relationships in this format:
+            [
+                {{"source": "entity_name", "target": "related_entity", "type": "RELATIONSHIP_TYPE", "description": "brief description"}}
+            ]
+            
+            Focus on technical architecture relationships. Be specific and realistic.
+            """
+            
+            headers = {
+                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are a technical architect analyzing system relationships. Return only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 500,
+                "temperature": 0.3
+            }
+            
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                llm_response = response.json()['choices'][0]['message']['content']
+                
+                # Extract JSON from response
+                json_match = re.search(r'\[.*\]', llm_response, re.DOTALL)
+                if json_match:
+                    relationships = json.loads(json_match.group())
+                    
+                    for rel in relationships:
+                        # Create target entity if it doesn't exist
+                        target_name = rel['target']
+                        if target_name not in self.entities:
+                            self.entities[target_name] = {
+                                'name': target_name,
+                                'type': self._infer_type_from_name(target_name),
+                                'properties': {'source': 'LLM_generated'},
+                                'description': f"Component related to {entity_name}"
+                            }
+                        
+                        # Add relationship
+                        self.relationships.append({
+                            'source': rel['source'],
+                            'target': rel['target'],
+                            'type': rel['type'],
+                            'description': rel['description'],
+                            'strength': 'medium',
+                            'source': 'LLM'
+                        })
+        
+        except Exception as e:
+            # Silently continue if LLM enhancement fails
+            pass
+    
+    def _infer_type_from_name(self, name):
+        """Infer entity type from name"""
+        name_lower = name.lower()
+        
+        if any(word in name_lower for word in ['database', 'db', 'data']):
+            return 'Database'
+        elif any(word in name_lower for word in ['server', 'host']):
+            return 'Server'
+        elif any(word in name_lower for word in ['service', 'api']):
+            return 'Service'
+        elif any(word in name_lower for word in ['security', 'auth']):
+            return 'Security Function'
+        elif any(word in name_lower for word in ['queue', 'message']):
+            return 'Queue'
+        elif any(word in name_lower for word in ['flow', 'process']):
+            return 'Flow'
+        else:
+            return 'Component'
+    
+    def get_strategic_insights(self):
+        """Generate strategic insights with LLM enhancement"""
+        insights = []
+        
+        # Network topology analysis
+        connections = defaultdict(int)
+        for rel in self.relationships:
+            connections[rel['source']] += 1
+            connections[rel['target']] += 1
+        
+        # Most connected entities (potential single points of failure)
+        if connections:
+            top_connected = sorted(connections.items(), key=lambda x: x[1], reverse=True)[:5]
+            critical_components = [name for name, count in top_connected if count > 3]
+            
+            if critical_components:
+                insights.append({
+                    'title': '🔴 Critical Components (High Connectivity)',
+                    'content': f"These components have many connections and could be single points of failure: {', '.join(critical_components[:3])}",
+                    'type': 'risk'
+                })
+        
+        # Technology diversity analysis
+        tech_entities = [e for e in self.entities.values() if e['type'] == 'Software']
+        if tech_entities:
+            tech_count = len(tech_entities)
+            insights.append({
+                'title': '🛠️ Technology Stack Diversity',
+                'content': f"Using {tech_count} different technologies. Review for standardization opportunities.",
+                'type': 'optimization'
+            })
+        
+        # Management coverage
+        managed_entities = set(rel['target'] for rel in self.relationships if rel['type'] == 'MANAGES')
+        unmanaged = [name for name in self.entities.keys() if name not in managed_entities and self.entities[name]['type'] not in ['Person', 'Location', 'Software']]
+        
+        if unmanaged:
+            insights.append({
+                'title': '⚠️ Management Gaps',
+                'content': f"{len(unmanaged)} components lack clear ownership. Consider assigning responsible parties.",
+                'type': 'governance'
+            })
+        
+        # LLM-enhanced strategic analysis
+        if self.use_llm and len(self.entities) > 0:
+            llm_insights = self._get_llm_strategic_insights()
+            if llm_insights:
+                insights.extend(llm_insights)
+        
+        return insights
+    
+    def _get_llm_strategic_insights(self):
+        """Get strategic insights from LLM analysis"""
+        try:
+            # Prepare architecture summary
+            entity_summary = {}
+            for entity_type in self.entity_types.keys():
+                count = len([e for e in self.entities.values() if e['type'] == entity_type])
+                if count > 0:
+                    entity_summary[entity_type] = count
+            
+            relationship_summary = {}
+            for rel in self.relationships:
+                rel_type = rel['type']
+                relationship_summary[rel_type] = relationship_summary.get(rel_type, 0) + 1
+            
+            prompt = f"""
+            Analyze this IT architecture and provide strategic insights:
+            
+            ENTITIES: {entity_summary}
+            RELATIONSHIPS: {relationship_summary}
+            
+            Provide 2-3 strategic insights focusing on:
+            1. Architecture risks and recommendations
+            2. Optimization opportunities
+            3. Governance and compliance considerations
+            
+            Format as JSON array:
+            [
+                {{"title": "insight title", "content": "detailed insight", "type": "risk|optimization|governance"}}
+            ]
+            
+            Be specific and actionable.
+            """
+            
+            headers = {
+                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are a senior IT architect providing strategic insights. Return only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 600,
+                "temperature": 0.3
+            }
+            
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                llm_response = response.json()['choices'][0]['message']['content']
+                json_match = re.search(r'\[.*\]', llm_response, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group())
+        
+        except Exception as e:
+            pass
+        
+        return []
+    
+    def get_network_view(self):
+        """Get network view for display"""
+        network_data = {
+            'entities': [],
+            'relationships': []
+        }
+        
+        for entity in self.entities.values():
+            network_data['entities'].append({
+                'name': entity['name'],
+                'type': entity['type'],
+                'icon': self.entity_types.get(entity['type'], '🔵'),
+                'description': entity['description'],
+                'properties': entity['properties']
+            })
+        
+        for rel in self.relationships:
+            network_data['relationships'].append({
+                'source': rel['source'],
+                'target': rel['target'],
+                'type': rel['type'],
+                'description': rel['description'],
+                'strength': rel.get('strength', 'medium')
+            })
+        
+        return network_data
+
+class EnhancedChatEngine:
+    """Enhanced chat engine with deep knowledge graph integration"""
+    
+    def __init__(self, knowledge_graph):
+        self.kg = knowledge_graph
+        self.use_llm = knowledge_graph.use_llm
     
     def answer_question(self, question):
-        """Answer questions about the Excel data using in-memory search"""
-        question_lower = question.lower().strip()
+        """Answer questions with deep analysis"""
         
-        # Oracle usage questions
-        if 'oracle' in question_lower and any(word in question_lower for word in ['used', 'application', 'app', 'software']):
-            return self._find_oracle_usage()
+        # Get structured answer from knowledge graph
+        structured_answer = self._analyze_with_kg(question)
         
-        # Common software questions
-        elif any(phrase in question_lower for phrase in ['common software', 'what software', 'software common']):
-            return self._find_common_software()
+        # Enhance with LLM for strategic insights
+        if self.use_llm and structured_answer:
+            try:
+                enhanced_answer = self._enhance_with_strategic_llm(question, structured_answer)
+                return enhanced_answer
+            except:
+                return structured_answer
         
-        # Database usage questions
-        elif any(word in question_lower for word in ['database', 'db']) and any(word in question_lower for word in ['used', 'application', 'app']):
-            return self._find_database_usage()
-        
-        # What uses X questions
-        elif 'what uses' in question_lower or 'what applications use' in question_lower:
-            tech_name = self._extract_technology_name(question_lower)
-            if tech_name:
-                return self._find_what_uses_technology(tech_name)
-        
-        # Who manages X questions
-        elif 'who manages' in question_lower or 'who owns' in question_lower:
-            entity_name = self._extract_entity_name_from_question(question_lower, ['who manages', 'who owns'])
-            if entity_name:
-                return self._find_who_manages(entity_name)
-        
-        # What does X manage questions
-        elif 'what does' in question_lower and 'manage' in question_lower:
-            person_name = self._extract_person_name_from_question(question_lower)
-            if person_name:
-                return self._find_what_person_manages(person_name)
-        
-        # Location questions
-        elif any(phrase in question_lower for phrase in ['what is in', 'what\'s in', 'location', 'datacenter', 'site']):
-            location_name = self._extract_location_name(question_lower)
-            if location_name:
-                return self._find_in_location(location_name)
-        
-        # Show all X questions
-        elif 'show all' in question_lower or 'list all' in question_lower:
-            return self._handle_show_all_question(question_lower)
-        
-        # Technology stack questions
-        elif any(phrase in question_lower for phrase in ['technology stack', 'tech stack', 'technologies used']):
-            return self._find_technology_stack()
-        
-        # Search questions
-        elif any(phrase in question_lower for phrase in ['search', 'find', 'contains']):
-            search_term = self._extract_search_term(question_lower)
-            if search_term:
-                return self._search_excel_data(search_term)
-        
-        # Fallback with suggestions
-        else:
-            return self._provide_suggestions()
+        return structured_answer or self._provide_suggestions()
     
-    def _find_oracle_usage(self):
-        """Find applications that use Oracle - IN-MEMORY SEARCH"""
-        oracle_users = []
+    def _analyze_with_kg(self, question):
+        """Deep analysis using knowledge graph structure"""
+        question_lower = question.lower()
         
-        for idx, row in self.df.iterrows():
-            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
-            if 'oracle' in row_text:
-                component_name = self._get_component_name_from_row(row)
-                oracle_users.append({
-                    'component': component_name,
-                    'row': idx + 1,
-                    'context': self._get_oracle_context(row)
-                })
+        # Architecture analysis
+        if any(word in question_lower for word in ['architecture', 'structure', 'design']):
+            return self._analyze_architecture()
         
-        if oracle_users:
-            result = "🔍 **Oracle Usage Found:**\n\n"
-            for user in oracle_users:
-                result += f"• **{user['component']}** (Row {user['row']})\n"
-                if user['context']:
-                    result += f"  📋 Context: {user['context']}\n"
-                result += "\n"
-            
-            result += f"📊 **Summary:** {len(oracle_users)} component(s) use Oracle"
-            return result
-        else:
-            return "❌ **No Oracle usage found** in your Excel data.\n\n💡 Try searching for other databases like 'MySQL', 'SQL Server', or 'PostgreSQL'"
+        # Dependency analysis
+        elif any(word in question_lower for word in ['depend', 'connect', 'relation']):
+            return self._analyze_dependencies()
+        
+        # Risk analysis
+        elif any(word in question_lower for word in ['risk', 'critical', 'failure', 'problem']):
+            return self._analyze_risks()
+        
+        # Technology analysis
+        elif any(word in question_lower for word in ['technology', 'tech', 'software', 'stack']):
+            return self._analyze_technology_stack()
+        
+        # Specific entity search
+        elif any(word in question_lower for word in ['what is', 'tell me about', 'describe']):
+            return self._describe_entity(question)
+        
+        # Management analysis
+        elif any(word in question_lower for word in ['manage', 'owner', 'responsible']):
+            return self._analyze_management()
+        
+        return None
     
-    def _find_common_software(self):
-        """Find common software/technologies - IN-MEMORY ANALYSIS"""
-        software_count = {}
+    def _analyze_architecture(self):
+        """Analyze overall architecture"""
+        entity_types = defaultdict(int)
+        for entity in self.kg.entities.values():
+            entity_types[entity['type']] += 1
         
-        # Look for software mentions in Excel data
-        software_keywords = ['oracle', 'mysql', 'sql server', 'postgres', 'mongodb', 'java', 'python', '.net', 
-                           'apache', 'nginx', 'tomcat', 'iis', 'linux', 'windows', 'unix', 'docker', 'kubernetes']
+        result = "🏗️ **Architecture Analysis:**\n\n"
         
-        for idx, row in self.df.iterrows():
-            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
-            component_name = self._get_component_name_from_row(row)
-            
-            for software in software_keywords:
-                if software in row_text:
-                    if software not in software_count:
-                        software_count[software] = []
-                    software_count[software].append({
-                        'component': component_name,
-                        'row': idx + 1
-                    })
+        # Entity distribution
+        result += "**Component Distribution:**\n"
+        for entity_type, count in sorted(entity_types.items(), key=lambda x: x[1], reverse=True):
+            icon = self.kg.entity_types.get(entity_type, '🔵')
+            result += f"{icon} {entity_type}: {count}\n"
         
-        if software_count:
-            # Sort by frequency
-            sorted_software = sorted(software_count.items(), key=lambda x: len(x[1]), reverse=True)
-            
-            result = "📊 **Common Software/Technologies:**\n\n"
-            
-            for software, usage_list in sorted_software[:10]:  # Top 10
-                result += f"🔹 **{software.title()}** - Used by {len(usage_list)} component(s)\n"
-                for usage in usage_list[:3]:  # Show first 3 examples
-                    result += f"   • {usage['component']} (Row {usage['row']})\n"
-                if len(usage_list) > 3:
-                    result += f"   • ... and {len(usage_list) - 3} more\n"
-                result += "\n"
-            
-            return result
-        else:
-            return "❌ **No common software patterns found** in your Excel data.\n\n💡 The system looks for technologies like Oracle, MySQL, Java, Python, etc."
-    
-    def _find_database_usage(self):
-        """Find database usage - IN-MEMORY SEARCH"""
-        database_keywords = ['oracle', 'mysql', 'sql server', 'postgres', 'postgresql', 'mongodb', 'redis', 'cassandra', 'db2']
-        database_usage = {}
+        # Relationship patterns
+        rel_types = defaultdict(int)
+        for rel in self.kg.relationships:
+            rel_types[rel['type']] += 1
         
-        for idx, row in self.df.iterrows():
-            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
-            component_name = self._get_component_name_from_row(row)
-            
-            for db in database_keywords:
-                if db in row_text:
-                    if db not in database_usage:
-                        database_usage[db] = []
-                    database_usage[db].append({
-                        'component': component_name,
-                        'row': idx + 1
-                    })
-        
-        if database_usage:
-            result = "🗄️ **Database Usage Analysis:**\n\n"
-            
-            for db, usage_list in sorted(database_usage.items(), key=lambda x: len(x[1]), reverse=True):
-                result += f"**{db.upper()}** - {len(usage_list)} component(s)\n"
-                for usage in usage_list:
-                    result += f"  • {usage['component']} (Row {usage['row']})\n"
-                result += "\n"
-            
-            return result
-        else:
-            return "❌ **No database usage found** in your Excel data.\n\n💡 Searched for: Oracle, MySQL, SQL Server, PostgreSQL, MongoDB, etc."
-    
-    def _find_what_uses_technology(self, tech_name):
-        """Find what uses specific technology - IN-MEMORY SEARCH"""
-        users = []
-        
-        for idx, row in self.df.iterrows():
-            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
-            if tech_name.lower() in row_text:
-                component_name = self._get_component_name_from_row(row)
-                users.append({
-                    'component': component_name,
-                    'row': idx + 1,
-                    'type': self._determine_component_type_from_row(row)
-                })
-        
-        if users:
-            result = f"🔍 **Components using {tech_name.title()}:**\n\n"
-            
-            # Group by type
-            by_type = {}
-            for user in users:
-                user_type = user['type']
-                if user_type not in by_type:
-                    by_type[user_type] = []
-                by_type[user_type].append(user)
-            
-            for comp_type, type_users in by_type.items():
-                result += f"**{comp_type.title()}s:**\n"
-                for user in type_users:
-                    result += f"  • {user['component']} (Row {user['row']})\n"
-                result += "\n"
-            
-            result += f"📊 **Total:** {len(users)} component(s) use {tech_name.title()}"
-            return result
-        else:
-            return f"❌ **No components found using {tech_name.title()}**\n\n💡 Try searching for other technologies or check spelling"
-    
-    def _search_excel_data(self, search_term):
-        """Search through Excel data - IN-MEMORY SEARCH"""
-        matches = []
-        
-        for idx, row in self.df.iterrows():
-            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
-            if search_term.lower() in row_text:
-                component_name = self._get_component_name_from_row(row)
-                # Find which columns contain the search term
-                matching_columns = []
-                for col in self.df.columns:
-                    if pd.notna(row[col]) and search_term.lower() in str(row[col]).lower():
-                        matching_columns.append(f"{col}: {row[col]}")
-                
-                matches.append({
-                    'component': component_name,
-                    'row': idx + 1,
-                    'matches': matching_columns[:3]  # Show first 3 matches
-                })
-        
-        if matches:
-            result = f"🔍 **Search results for '{search_term}':**\n\n"
-            for match in matches[:10]:  # Show first 10 results
-                result += f"• **{match['component']}** (Row {match['row']})\n"
-                for col_match in match['matches']:
-                    result += f"  📋 {col_match}\n"
-                result += "\n"
-            
-            if len(matches) > 10:
-                result += f"... and {len(matches) - 10} more results\n"
-            
-            result += f"📊 **Total:** {len(matches)} match(es) found"
-            return result
-        else:
-            return f"❌ **No matches found for '{search_term}'**\n\n💡 Try different search terms or check spelling"
-    
-    def _show_all_by_type(self, component_type):
-        """Show all components of specific type - IN-MEMORY FILTER"""
-        components = self.entity_by_type.get(component_type, [])
-        
-        if components:
-            result = f"📋 **All {component_type.title()}s ({len(components)}):**\n\n"
-            for comp_id in components:
-                entity = self.entities[comp_id]
-                result += f"• **{entity['label']}**"
-                if 'excel_row' in entity:
-                    result += f" (Excel Row {entity['excel_row']})"
-                
-                # Add key properties
-                props = entity.get('properties', {})
-                key_props = []
-                for key, value in props.items():
-                    if key in ['department', 'location', 'status', 'type', 'role'] and value:
-                        key_props.append(f"{key}: {value}")
-                
-                if key_props:
-                    result += f"\n  📋 {' | '.join(key_props[:2])}"
-                
-                result += "\n\n"
-            
-            return result
-        else:
-            return f"❌ **No {component_type}s found** in your data"
-    
-    def _handle_show_all_question(self, question):
-        """Handle 'show all' type questions"""
-        if any(word in question for word in ['application', 'app']):
-            return self._show_all_by_type('application')
-        elif any(word in question for word in ['server', 'servers']):
-            return self._show_all_by_type('server')
-        elif any(word in question for word in ['database', 'databases', 'db']):
-            return self._show_all_by_type('database')
-        elif any(word in question for word in ['person', 'people', 'manager', 'admin']):
-            return self._show_all_by_type('person')
-        elif any(word in question for word in ['location', 'locations', 'site']):
-            return self._show_all_by_type('location')
-        else:
-            return self._show_all_components()
-    
-    def _show_all_components(self):
-        """Show all components grouped by type"""
-        result = "📊 **All Components by Type:**\n\n"
-        
-        for comp_type, comp_list in self.entity_by_type.items():
-            result += f"**{comp_type.title()}s ({len(comp_list)}):**\n"
-            for comp_id in comp_list[:5]:  # Show first 5 of each type
-                entity = self.entities[comp_id]
-                result += f"  • {entity['label']}\n"
-            if len(comp_list) > 5:
-                result += f"  • ... and {len(comp_list) - 5} more\n"
-            result += "\n"
+        result += "\n**Relationship Patterns:**\n"
+        for rel_type, count in sorted(rel_types.items(), key=lambda x: x[1], reverse=True):
+            result += f"• {rel_type}: {count} connections\n"
         
         return result
     
-    def _find_technology_stack(self):
-        """Find technology stack overview"""
-        tech_keywords = {
-            'Database': ['oracle', 'mysql', 'sql server', 'postgres', 'mongodb', 'redis'],
-            'Programming': ['java', 'python', '.net', 'c#', 'javascript', 'php'],
-            'Web Server': ['apache', 'nginx', 'iis', 'tomcat'],
-            'Operating System': ['linux', 'windows', 'unix', 'solaris'],
-            'Cloud/Container': ['docker', 'kubernetes', 'aws', 'azure', 'gcp']
-        }
+    def _analyze_dependencies(self):
+        """Analyze component dependencies"""
+        # Build dependency graph
+        dependencies = defaultdict(list)
+        dependents = defaultdict(list)
         
-        tech_usage = {}
+        for rel in self.kg.relationships:
+            if rel['type'] in ['DEPENDS_ON', 'USES', 'CONNECTS_TO']:
+                dependencies[rel['source']].append(rel['target'])
+                dependents[rel['target']].append(rel['source'])
         
-        for category, keywords in tech_keywords.items():
-            tech_usage[category] = {}
-            for idx, row in self.df.iterrows():
-                row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
-                component_name = self._get_component_name_from_row(row)
-                
-                for tech in keywords:
-                    if tech in row_text:
-                        if tech not in tech_usage[category]:
-                            tech_usage[category][tech] = []
-                        tech_usage[category][tech].append(component_name)
+        result = "🔗 **Dependency Analysis:**\n\n"
         
-        result = "🛠️ **Technology Stack Overview:**\n\n"
+        # Most depended upon
+        most_depended = sorted(dependents.items(), key=lambda x: len(x[1]), reverse=True)[:5]
+        if most_depended:
+            result += "**Most Depended Upon Components:**\n"
+            for component, deps in most_depended:
+                entity_type = self.kg.entities.get(component, {}).get('type', 'Unknown')
+                icon = self.kg.entity_types.get(entity_type, '🔵')
+                result += f"{icon} {component}: {len(deps)} dependencies\n"
         
-        for category, techs in tech_usage.items():
-            if techs:
-                result += f"**{category}:**\n"
-                for tech, components in techs.items():
-                    result += f"  • {tech.title()}: {len(components)} component(s)\n"
-                result += "\n"
+        # Most dependent
+        most_dependent = sorted(dependencies.items(), key=lambda x: len(x[1]), reverse=True)[:5]
+        if most_dependent:
+            result += "\n**Most Dependent Components:**\n"
+            for component, deps in most_dependent:
+                entity_type = self.kg.entities.get(component, {}).get('type', 'Unknown')
+                icon = self.kg.entity_types.get(entity_type, '🔵')
+                result += f"{icon} {component}: depends on {len(deps)} components\n"
         
-        return result if any(tech_usage.values()) else "❌ **No technology stack patterns found** in your data"
+        return result
     
-    def _provide_suggestions(self):
-        """Provide helpful suggestions for questions"""
-        return """❓ **I didn't understand that question. Try asking:**
-
-🔍 **Technology Questions:**
-• "What applications use Oracle?"
-• "What software is common in applications?"
-• "What uses MySQL?"
-• "Search for Java"
-• "Show technology stack"
-
-👤 **Management Questions:**
-• "Who manages [component name]?"
-• "What does [person name] manage?"
-
-📍 **Location Questions:**
-• "What is in DataCenter-A?"
-• "Show all locations"
-
-📋 **General Questions:**
-• "Show all applications"
-• "Show all servers"
-• "List all databases"
-
-🔎 **Search:**
-• "Search for [any term]"
-• "Find components with [keyword]"
-
-💡 **Tip:** Use the exact names from your Excel data for best results!"""
-    
-    # Helper methods
-    def _get_component_name_from_row(self, row):
-        """Extract component name from Excel row"""
-        name_columns = [col for col in self.df.columns if any(keyword in col.lower() 
-                       for keyword in ['name', 'title', 'component', 'asset', 'system', 'application'])]
+    def _analyze_risks(self):
+        """Comprehensive risk analysis"""
+        risks = []
         
-        for col in name_columns:
-            if pd.notna(row[col]) and str(row[col]).strip():
-                return str(row[col]).strip()
+        # Single points of failure
+        connections = defaultdict(int)
+        for rel in self.kg.relationships:
+            connections[rel['source']] += 1
+            connections[rel['target']] += 1
         
-        for col in self.df.columns:
-            if pd.notna(row[col]) and str(row[col]).strip():
-                return str(row[col]).strip()
+        critical_components = [(name, count) for name, count in connections.items() if count > 4]
+        if critical_components:
+            risks.append({
+                'level': 'HIGH',
+                'type': 'Single Point of Failure',
+                'components': [name for name, _ in critical_components[:3]],
+                'description': 'Highly connected components that could cause cascading failures'
+            })
         
-        return f"Component {row.name + 1}"
-    
-    def _determine_component_type_from_row(self, row):
-        """Determine component type from Excel row"""
-        row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).lower()
+        # Unmanaged components
+        managed = set(rel['target'] for rel in self.kg.relationships if rel['type'] == 'MANAGES')
+        unmanaged = [name for name, entity in self.kg.entities.items() 
+                    if name not in managed and entity['type'] not in ['Person', 'Location']]
         
-        if any(keyword in row_text for keyword in ['application', 'app', 'software']):
-            return 'application'
-        elif any(keyword in row_text for keyword in ['server', 'host', 'machine']):
-            return 'server'
-        elif any(keyword in row_text for keyword in ['database', 'db', 'data']):
-            return 'database'
-        else:
-            return 'component'
-    
-    def _extract_technology_name(self, question):
-        """Extract technology name from question"""
-        words = question.split()
-        tech_indicators = ['uses', 'use', 'using', 'with']
+        if unmanaged:
+            risks.append({
+                'level': 'MEDIUM',
+                'type': 'Governance Gap',
+                'components': unmanaged[:3],
+                'description': 'Components without clear ownership or management'
+            })
         
-        for i, word in enumerate(words):
-            if word in tech_indicators and i + 1 < len(words):
-                return words[i + 1].strip('?.,')
+        # Technology concentration
+        tech_usage = defaultdict(list)
+        for rel in self.kg.relationships:
+            if rel['type'] == 'USES':
+                tech_usage[rel['target']].append(rel['source'])
         
-        return None
+        concentrated_tech = [(tech, users) for tech, users in tech_usage.items() if len(users) > 3]
+        if concentrated_tech:
+            risks.append({
+                'level': 'MEDIUM',
+                'type': 'Technology Concentration',
+                'components': [tech for tech, _ in concentrated_tech[:2]],
+                'description': 'Heavy reliance on specific technologies'
+            })
+        
+        result = "🛡️ **Risk Analysis:**\n\n"
+        for risk in risks:
+            level_icon = '🔴' if risk['level'] == 'HIGH' else '🟡'
+            result += f"{level_icon} **{risk['level']} RISK - {risk['type']}**\n"
+            result += f"Components: {', '.join(risk['components'])}\n"
+            result += f"Impact: {risk['description']}\n\n"
+        
+        return result if risks else "✅ **No significant risks detected in current analysis**"
     
-    def _extract_entity_name_from_question(self, question, keywords):
-        """Extract entity name from question"""
-        for keyword in keywords:
-            if keyword in question:
-                parts = question.split(keyword)
-                if len(parts) > 1:
-                    return parts[1].strip(' ?.,')
-        return None
+    def _analyze_technology_stack(self):
+        """Analyze technology stack"""
+        tech_entities = [e for e in self.kg.entities.values() if e['type'] == 'Software']
+        
+        if not tech_entities:
+            return "❌ **No technology information found in the data**"
+        
+        result = "🛠️ **Technology Stack Analysis:**\n\n"
+        
+        # Technology usage
+        tech_usage = defaultdict(list)
+        for rel in self.kg.relationships:
+            if rel['type'] == 'USES' and rel['target'] in [t['name'] for t in tech_entities]:
+                tech_usage[rel['target']].append(rel['source'])
+        
+        result += "**Technology Usage:**\n"
+        for tech, users in sorted(tech_usage.items(), key=lambda x: len(x[1]), reverse=True):
+            result += f"• {tech}: used by {len(users)} component(s)\n"
+            for user in users[:3]:  # Show first 3 users
+                entity_type = self.kg.entities.get(user, {}).get('type', 'Unknown')
+                icon = self.kg.entity_types.get(entity_type, '🔵')
+                result += f"  {icon} {user}\n"
+            if len(users) > 3:
+                result += f"  ... and {len(users) - 3} more\n"
+        
+        return result
     
-    def _extract_search_term(self, question):
-        """Extract search term from question"""
-        search_indicators = ['search for', 'find', 'search', 'contains']
-        for indicator in search_indicators:
-            if indicator in question:
-                parts = question.split(indicator)
-                if len(parts) > 1:
-                    return parts[1].strip(' ?.,')
-        return None
+    def _describe_entity(self, question):
+        """Describe specific entity"""
+        # Extract entity name from question
+        words = question.lower().split()
+        
+        # Find entity name in question
+        entity_name = None
+        for word in words:
+            if word in self.kg.entities:
+                entity_name = word
+                break
+        
+        # If not found, try partial matching
+        if not entity_name:
+            for name in self.kg.entities.keys():
+                if any(word in name.lower() for word in words):
+                    entity_name = name
+                    break
+        
+        if entity_name:
+            entity = self.kg.entities[entity_name]
+            icon = self.kg.entity_types.get(entity['type'], '🔵')
+            
+            result = f"{icon} **{entity_name}**\n\n"
+            result += f"**Type:** {entity['type']}\n"
+            result += f"**Description:** {entity['description']}\n\n"
+            
+            # Show relationships
+            incoming = [rel for rel in self.kg.relationships if rel['target'] == entity_name]
+            outgoing = [rel for rel in self.kg.relationships if rel['source'] == entity_name]
+            
+            if incoming:
+                result += "**Incoming Relationships:**\n"
+                for rel in incoming[:5]:
+                    result += f"• {rel['source']} → {rel['type']} → {entity_name}\n"
+            
+            if outgoing:
+                result += "**Outgoing Relationships:**\n"
+                for rel in outgoing[:5]:
+                    result += f"• {entity_name} → {rel['type']} → {rel['target']}\n"
+            
+            return result
+        
+        return "❌ **Entity not found. Try asking about specific components in your data.**"
     
-    def _get_oracle_context(self, row):
-        """Get context about Oracle usage from row"""
-        oracle_context = []
-        for col in self.df.columns:
-            if pd.notna(row[col]) and 'oracle' in str(row[col]).lower():
-                oracle_context.append(f"{col}: {row[col]}")
-        return ' | '.join(oracle_context[:2]) if oracle_context else None
-    
-    def _find_who_manages(self, entity_name):
-        """Find who manages entity - RELATIONSHIP LOOKUP"""
-        managers = []
-        for rel in self.relationships:
-            if rel['type'] == 'manages':
-                target_entity = self.entities.get(rel['target'])
-                if target_entity and entity_name.lower() in target_entity['label'].lower():
-                    manager_entity = self.entities.get(rel['source'])
-                    if manager_entity:
-                        managers.append({
-                            'manager': manager_entity['label'],
-                            'entity': target_entity['label']
-                        })
+    def _analyze_management(self):
+        """Analyze management structure"""
+        managers = defaultdict(list)
+        for rel in self.kg.relationships:
+            if rel['type'] == 'MANAGES':
+                managers[rel['source']].append(rel['target'])
+        
+        result = "👤 **Management Analysis:**\n\n"
         
         if managers:
-            result = f"👤 **Management for '{entity_name}':**\n\n"
-            for mgr in managers:
-                result += f"• **{mgr['manager']}** manages **{mgr['entity']}**\n"
-            return result
-        else:
-            return f"❌ **No management information found for '{entity_name}'**"
-    
-    def _extract_person_name_from_question(self, question):
-        """Extract person name from 'what does X manage' questions"""
-        if 'what does' in question and 'manage' in question:
-            start = question.find('what does') + 9
-            end = question.find('manage')
-            return question[start:end].strip()
-        return None
-    
-    def _find_what_person_manages(self, person_name):
-        """Find what person manages - RELATIONSHIP LOOKUP"""
-        managed = []
-        for rel in self.relationships:
-            if rel['type'] == 'manages':
-                manager_entity = self.entities.get(rel['source'])
-                if manager_entity and person_name.lower() in manager_entity['label'].lower():
-                    target_entity = self.entities.get(rel['target'])
-                    if target_entity:
-                        managed.append(target_entity['label'])
+            result += "**Management Structure:**\n"
+            for manager, managed in sorted(managers.items(), key=lambda x: len(x[1]), reverse=True):
+                result += f"• {manager} manages {len(managed)} component(s):\n"
+                for component in managed[:3]:
+                    entity_type = self.kg.entities.get(component, {}).get('type', 'Unknown')
+                    icon = self.kg.entity_types.get(entity_type, '🔵')
+                    result += f"  {icon} {component}\n"
+                if len(managed) > 3:
+                    result += f"  ... and {len(managed) - 3} more\n"
         
-        if managed:
-            result = f"👤 **{person_name} manages:**\n\n"
-            for item in managed:
-                result += f"• {item}\n"
-            return result
-        else:
-            return f"❌ **No management info found for {person_name}**"
-    
-    def _extract_location_name(self, question):
-        """Extract location name from question"""
-        location_indicators = ['what is in', 'in', 'location', 'datacenter', 'site']
-        for indicator in location_indicators:
-            if indicator in question:
-                parts = question.split(indicator)
-                if len(parts) > 1:
-                    return parts[1].strip(' ?.,')
-        return None
-    
-    def _find_in_location(self, location_name):
-        """Find components in location - RELATIONSHIP LOOKUP"""
-        components = []
-        for rel in self.relationships:
-            if rel['type'] == 'located_in':
-                location_entity = self.entities.get(rel['target'])
-                if location_entity and location_name.lower() in location_entity['label'].lower():
-                    component_entity = self.entities.get(rel['source'])
-                    if component_entity:
-                        components.append(component_entity['label'])
+        # Find unmanaged components
+        managed_components = set()
+        for managed_list in managers.values():
+            managed_components.update(managed_list)
         
-        if components:
-            result = f"📍 **Components in {location_name}:**\n\n"
-            for comp in components:
-                result += f"• {comp}\n"
-            return result
-        else:
-            return f"❌ **No components found in {location_name}**"
+        unmanaged = [name for name, entity in self.kg.entities.items() 
+                    if name not in managed_components and entity['type'] not in ['Person', 'Location']]
+        
+        if unmanaged:
+            result += f"\n**⚠️ Unmanaged Components ({len(unmanaged)}):**\n"
+            for component in unmanaged[:5]:
+                entity_type = self.kg.entities.get(component, {}).get('type', 'Unknown')
+                icon = self.kg.entity_types.get(entity_type, '🔵')
+                result += f"• {icon} {component}\n"
+            if len(unmanaged) > 5:
+                result += f"... and {len(unmanaged) - 5} more\n"
+        
+        return result
+    
+    def _enhance_with_strategic_llm(self, question, structured_answer):
+        """Enhance answer with strategic LLM insights"""
+        try:
+            prompt = f"""
+            Question: {question}
+            
+            Data Analysis Results:
+            {structured_answer}
+            
+            Based on this technical analysis, provide strategic insights and recommendations:
+            
+            1. Business impact and implications
+            2. Risk mitigation strategies
+            3. Optimization opportunities
+            4. Action items for leadership
+            
+            Be specific, actionable, and focus on business value.
+            """
+            
+            headers = {
+                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are a strategic IT consultant providing executive-level insights from technical analysis."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 400,
+                "temperature": 0.3
+            }
+            
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                llm_response = response.json()['choices'][0]['message']['content']
+                return f"📊 **Technical Analysis:**\n{structured_answer}\n\n🧠 **Strategic Insights:**\n{llm_response}"
+            
+        except Exception as e:
+            pass
+        
+        return structured_answer
+    
+    def _provide_suggestions(self):
+        """Provide helpful suggestions"""
+        return """💡 **Try asking strategic questions like:**
 
-class KnowledgeGraphVisualizer:
-    """Generate interactive knowledge graph visualizations"""
-    
-    def __init__(self):
-        self.colors = {
-            'application': '#FF6B6B',
-            'server': '#4ECDC4', 
-            'database': '#45B7D1',
-            'network': '#96CEB4',
-            'service': '#FFEAA7',
-            'person': '#DDA0DD',
-            'location': '#98D8C8',
-            'organization': '#F7DC6F',
-            'component': '#AED6F1',
-            'default': '#BDC3C7'
-        }
-    
-    def create_graph(self, entities, relationships, height=600):
-        """Create interactive network graph using pyvis"""
-        
-        # Create network
-        net = Network(height=f"{height}px", width="100%", bgcolor="#ffffff", font_color="black")
-        net.set_options("""
-        var options = {
-          "physics": {
-            "enabled": true,
-            "stabilization": {"iterations": 100}
-          }
-        }
-        """)
-        
-        # Add nodes
-        for entity in entities:
-            color = self.colors.get(entity.get('type', 'default'), self.colors['default'])
-            size = self._calculate_node_size(entity, relationships)
-            
-            title = self._create_node_tooltip(entity)
-            
-            net.add_node(
-                entity['id'],
-                label=entity['label'],
-                color=color,
-                size=size,
-                title=title,
-                font={'size': 12}
-            )
-        
-        # Add edges
-        for rel in relationships:
-            edge_color = self._get_edge_color(rel['type'])
-            net.add_edge(
-                rel['source'], 
-                rel['target'],
-                label=rel['type'].replace('_', ' ').title(),
-                color=edge_color,
-                width=2,
-                title=rel.get('properties', {}).get('description', rel['type'])
-            )
-        
-        return net
-    
-    def _calculate_node_size(self, entity, relationships):
-        """Calculate node size based on connections"""
-        connections = 0
-        entity_id = entity['id']
-        
-        for rel in relationships:
-            if rel['source'] == entity_id or rel['target'] == entity_id:
-                connections += 1
-        
-        # Base size 20, +5 for each connection, max 50
-        return min(20 + (connections * 5), 50)
-    
-    def _create_node_tooltip(self, entity):
-        """Create detailed tooltip for node"""
-        tooltip = f"<b>{entity['label']}</b><br>"
-        tooltip += f"Type: {entity.get('type', 'Unknown').title()}<br>"
-        
-        if 'excel_row' in entity:
-            tooltip += f"Excel Row: {entity['excel_row']}<br>"
-        
-        properties = entity.get('properties', {})
-        if properties:
-            tooltip += "<br><b>Properties:</b><br>"
-            for key, value in list(properties.items())[:5]:  # Show first 5 properties
-                clean_key = key.replace('_', ' ').title()
-                tooltip += f"{clean_key}: {value}<br>"
-        
-        return tooltip
-    
-    def _get_edge_color(self, relationship_type):
-        """Get color for relationship type"""
-        edge_colors = {
-            'manages': '#E74C3C',
-            'located_in': '#3498DB',
-            'belongs_to': '#9B59B6',
-            'uses': '#F39C12',
-            'connects_to': '#27AE60',
-            'depends_on': '#E67E22',
-            'default': '#95A5A6'
-        }
-        return edge_colors.get(relationship_type, edge_colors['default'])
+🏗️ **Architecture Questions:**
+• "Analyze the overall architecture"
+• "What are the dependencies?"
+• "Describe the [component name]"
+
+🛡️ **Risk & Security:**
+• "What are the risks in our system?"
+• "Which components are most critical?"
+• "Show me single points of failure"
+
+🛠️ **Technology:**
+• "Analyze our technology stack"
+• "What technologies are we using?"
+• "Show technology dependencies"
+
+👤 **Management:**
+• "Who manages what components?"
+• "What are the management gaps?"
+• "Show ownership structure"
+"""
 
 def create_sample_data():
-    """Create sample data for testing"""
-    sample_data = {
-        'Component Name': ['Web Server 1', 'Database Server', 'Email System', 'File Server', 'Backup System'],
-        'Type': ['Application', 'Database', 'Application', 'Server', 'Service'],
-        'Owner': ['John Smith', 'Jane Doe', 'Bob Wilson', 'Alice Brown', 'John Smith'],
-        'Location': ['DataCenter-A', 'DataCenter-A', 'DataCenter-B', 'DataCenter-A', 'DataCenter-B'],
-        'Department': ['IT', 'IT', 'Operations', 'IT', 'Operations'],
-        'Technology': ['Apache, Linux', 'Oracle, Linux', 'Exchange, Windows', 'Windows Server', 'Veeam, Windows'],
-        'Status': ['Active', 'Active', 'Active', 'Maintenance', 'Active']
-    }
-    return pd.DataFrame(sample_data)
+    """Create sample data that demonstrates rich knowledge graph capabilities"""
+    return pd.DataFrame({
+        'Application Name': [
+            'Customer Portal',
+            'Payment Gateway', 
+            'User Management Service',
+            'Order Processing System',
+            'Analytics Dashboard'
+        ],
+        'Type': [
+            'Web Application',
+            'Payment Service',
+            'Identity Service', 
+            'Business Application',
+            'Analytics Platform'
+        ],
+        'Technology Stack': [
+            'React, Node.js, PostgreSQL',
+            'Java, Spring Boot, Redis',
+            'Python, FastAPI, MongoDB',
+            'Java, Kafka, Oracle',
+            'Python, Elasticsearch, Kibana'
+        ],
+        'Owner': [
+            'John Smith',
+            'Jane Doe',
+            'Bob Wilson',
+            'Alice Brown',
+            'John Smith'
+        ],
+        'Environment': [
+            'Production',
+            'Production',
+            'Production',
+            'Staging',
+            'Production'
+        ],
+        'Location': [
+            'AWS US-East',
+            'AWS US-East',
+            'Azure Central',
+            'AWS US-West',
+            'AWS US-East'
+        ],
+        'Criticality': [
+            'High',
+            'Critical',
+            'Critical',
+            'Medium',
+            'Low'
+        ],
+        'Dependencies': [
+            'User Management Service, Payment Gateway',
+            'Order Processing System',
+            'Analytics Dashboard',
+            'Customer Portal',
+            'Order Processing System, User Management Service'
+        ]
+    })
 
 def main():
-    """Main Streamlit application"""
-    
-    st.title("📊 Complete Knowledge Graph System")
-    st.write("Transform your Excel data into an interactive knowledge graph and chat with your data!")
+    st.title("🔗 Advanced Knowledge Graph System")
+    st.write("Transform your enterprise data into intelligent, connected insights")
     
     # Initialize session state
-    if 'graph_data' not in st.session_state:
-        st.session_state.graph_data = None
+    if 'kg' not in st.session_state:
+        st.session_state.kg = None
     if 'chat_engine' not in st.session_state:
         st.session_state.chat_engine = None
-    if 'original_df' not in st.session_state:
-        st.session_state.original_df = None
     
-    # Sidebar
+    # Configuration sidebar
     with st.sidebar:
-        st.header("📋 Data Source")
+        st.header("⚙️ Configuration")
         
-        data_source = st.radio(
-            "Choose your data source:",
-            ["📁 Upload Excel File", "🔧 Use Sample Data"]
+        # LLM Status
+        llm_status = "🟢 Active" if LLM_API_KEY != "your_api_key_here" else "🔴 Configure API Key"
+        st.write(f"**LLM Enhancement:** {llm_status}")
+        
+        if llm_status == "🔴 Configure API Key":
+            st.info("💡 Configure LLM_API_KEY in the code for enhanced insights")
+        
+        st.divider()
+        
+        st.header("📊 Data Source")
+        
+        # Sample data button
+        if st.button("🚀 Load Sample Architecture", type="primary"):
+            with st.spinner("Creating knowledge graph..."):
+                df = create_sample_data()
+                kg = EnhancedKnowledgeGraph()
+                kg.process_data(df)
+                st.session_state.kg = kg
+                st.session_state.chat_engine = EnhancedChatEngine(kg)
+                st.success("✅ Sample architecture loaded!")
+                st.rerun()
+        
+        # File upload
+        uploaded_file = st.file_uploader(
+            "📁 Upload Excel/CSV", 
+            type=['xlsx', 'csv'],
+            help="Upload your architecture or component data"
         )
         
-        if data_source == "📁 Upload Excel File":
-            uploaded_file = st.file_uploader(
-                "Choose Excel file", 
-                type=['xlsx', 'xls', 'csv'],
-                help="Upload your Excel or CSV file containing component data"
-            )
-            
-            if uploaded_file is not None:
-                try:
-                    if uploaded_file.name.endswith('.csv'):
-                        df = pd.read_csv(uploaded_file)
-                    else:
-                        df = pd.read_excel(uploaded_file)
-                    
-                    st.success(f"✅ File loaded: {len(df)} rows, {len(df.columns)} columns")
-                    
-                    if st.button("🔄 Process Data"):
-                        with st.spinner("Processing Excel data..."):
-                            mapper = DirectExcelMapper()
-                            st.session_state.graph_data = mapper.process_excel(df)
-                            st.session_state.chat_engine = ExcelChatEngine(
-                                st.session_state.graph_data['entities'],
-                                st.session_state.graph_data['relationships'],
-                                df
-                            )
-                            st.session_state.original_df = df
-                            st.success("🎉 Knowledge graph created!")
-                            st.rerun()
-                            
-                except Exception as e:
-                    st.error(f"❌ Error reading file: {str(e)}")
-        
-        else:  # Sample data
-            st.info("📖 Using sample IT infrastructure data")
-            if st.button("🔄 Load Sample Data"):
-                with st.spinner("Creating sample knowledge graph..."):
-                    df = create_sample_data()
-                    mapper = DirectExcelMapper()
-                    st.session_state.graph_data = mapper.process_excel(df)
-                    st.session_state.chat_engine = ExcelChatEngine(
-                        st.session_state.graph_data['entities'],
-                        st.session_state.graph_data['relationships'],
-                        df
-                    )
-                    st.session_state.original_df = df
-                    st.success("🎉 Sample knowledge graph created!")
-                    st.rerun()
+        if uploaded_file:
+            try:
+                df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+                st.success(f"📊 {len(df)} rows loaded")
+                
+                if st.button("🔄 Process Architecture Data"):
+                    with st.spinner("Building knowledge graph..."):
+                        kg = EnhancedKnowledgeGraph()
+                        kg.process_data(df)
+                        st.session_state.kg = kg
+                        st.session_state.chat_engine = EnhancedChatEngine(kg)
+                        st.success("✅ Knowledge graph created!")
+                        st.rerun()
+                        
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
     
-    # Main content
-    if st.session_state.graph_data is None:
-        st.info("👆 Please upload an Excel file or use sample data to get started!")
+    # Main content area
+    if st.session_state.kg is None:
+        # Welcome screen with value proposition
+        st.markdown("""
+        ### 🎯 Why Advanced Knowledge Graphs?
         
-        # Show preview of what the system can do
-        st.write("### 🚀 What this system can do:")
+        **Transform your spreadsheets into intelligent, connected insights:**
+        """)
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.write("**📈 Knowledge Graph Features:**")
-            st.write("• Automatic component detection")
-            st.write("• Relationship mapping")
-            st.write("• Interactive visualization")
-            st.write("• Type-based categorization")
+            st.markdown("""
+            **🔍 Discover Hidden Patterns:**
+            - Find critical dependencies others miss
+            - Identify single points of failure
+            - Uncover management gaps
+            - Analyze technology concentration risks
             
-        with col2:
-            st.write("**💬 Chat Capabilities:**")
-            st.write("• Technology usage analysis")
-            st.write("• Management relationships")
-            st.write("• Location-based queries")
-            st.write("• Search and discovery")
+            **🧠 AI-Powered Insights:**
+            - Strategic recommendations from LLM
+            - Risk analysis and mitigation strategies
+            - Architecture optimization opportunities
+            """)
         
+        with col2:
+            st.markdown("""
+            **📊 Rich Visualizations:**
+            - Interactive network diagrams
+            - Component relationship mapping
+            - Technology stack analysis
+            - Management structure overview
+            
+            **💬 Intelligent Chat:**
+            - Ask complex architecture questions
+            - Get strategic business insights
+            - Receive actionable recommendations
+            """)
+        
+        st.info("👆 **Get started:** Load sample data or upload your architecture file")
         return
     
-    # Tabs for different views
-    tab1, tab2, tab3, tab4 = st.tabs(["🌐 Knowledge Graph", "💬 Chat with Data", "📊 Analytics", "📋 Raw Data"])
+    # Main tabs
+    tab1, tab2 = st.tabs(["💡 Strategic Dashboard", "💬 Ask Architecture Questions"])
     
     with tab1:
-        st.header("🌐 Interactive Knowledge Graph")
+        st.header("📊 Strategic Architecture Insights")
         
-        # Graph controls
-        col1, col2, col3 = st.columns(3)
+        # Key metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
         with col1:
-            height = st.slider("Graph Height", 400, 800, 600, 50)
+            st.metric("🏗️ Components", len(st.session_state.kg.entities))
         with col2:
-            show_stats = st.checkbox("Show Statistics", True)
+            st.metric("🔗 Relationships", len(st.session_state.kg.relationships))
         with col3:
-            download_graph = st.button("💾 Download Graph Data")
+            entity_types = len(set(e['type'] for e in st.session_state.kg.entities.values()))
+            st.metric("📋 Entity Types", entity_types)
+        with col4:
+            avg_connections = len(st.session_state.kg.relationships) / len(st.session_state.kg.entities) if st.session_state.kg.entities else 0
+            st.metric("🔄 Avg Connections", f"{avg_connections:.1f}")
         
-        if download_graph:
-            graph_json = json.dumps(st.session_state.graph_data, indent=2)
-            st.download_button(
-                label="📥 Download as JSON",
-                data=graph_json,
-                file_name="knowledge_graph.json",
-                mime="application/json"
-            )
+        # Strategic insights
+        st.subheader("🧠 Strategic Insights")
+        insights = st.session_state.kg.get_strategic_insights()
         
-        # Create and display graph
-        try:
-            visualizer = KnowledgeGraphVisualizer()
-            net = visualizer.create_graph(
-                st.session_state.graph_data['entities'],
-                st.session_state.graph_data['relationships'],
-                height
-            )
+        for insight in insights:
+            if insight.get('type') == 'risk':
+                st.error(f"**{insight['title']}**\n\n{insight['content']}")
+            elif insight.get('type') == 'optimization':
+                st.info(f"**{insight['title']}**\n\n{insight['content']}")
+            else:
+                st.warning(f"**{insight['title']}**\n\n{insight['content']}")
             
-            # Generate HTML content directly without file operations
-            try:
-                # Try to get HTML content directly from pyvis
-                html_content = net.generate_html()
-                st.components.v1.html(html_content, height=height+50)
-            except AttributeError:
-                # Fallback: Use a more robust file handling approach
-                import time
-                import uuid
+            st.divider()
+        
+        # Network overview
+        st.subheader("🌐 Architecture Overview")
+        
+        # Entity type distribution
+        entity_type_counts = defaultdict(int)
+        for entity in st.session_state.kg.entities.values():
+            entity_type_counts[entity['type']] += 1
+        
+        st.write("**Component Distribution:**")
+        for entity_type, count in sorted(entity_type_counts.items(), key=lambda x: x[1], reverse=True):
+            icon = st.session_state.kg.entity_types.get(entity_type, '🔵')
+            percentage = (count / len(st.session_state.kg.entities)) * 100
+            st.write(f"{icon} **{entity_type}**: {count} ({percentage:.1f}%)")
+        
+        # Key relationships
+        if st.checkbox("🔍 Show Key Relationships"):
+            st.write("**🔗 Important Connections:**")
+            
+            # Group relationships by type
+            rel_groups = defaultdict(list)
+            for rel in st.session_state.kg.relationships:
+                rel_groups[rel['type']].append(rel)
+            
+            for rel_type, rels in rel_groups.items():
+                st.write(f"\n**{rel_type} Relationships:**")
+                for rel in rels[:5]:  # Show first 5
+                    source_type = st.session_state.kg.entities.get(rel['source'], {}).get('type', 'Unknown')
+                    target_type = st.session_state.kg.entities.get(rel['target'], {}).get('type', 'Unknown')
+                    source_icon = st.session_state.kg.entity_types.get(source_type, '🔵')
+                    target_icon = st.session_state.kg.entity_types.get(target_type, '🔵')
+                    
+                    st.write(f"  {source_icon} {rel['source']} → {target_icon} {rel['target']}")
                 
-                # Create unique filename to avoid conflicts
-                unique_id = str(uuid.uuid4())[:8]
-                temp_filename = f"temp_graph_{unique_id}_{int(time.time())}.html"
-                temp_path = os.path.join(tempfile.gettempdir(), temp_filename)
-                
-                try:
-                    # Save graph
-                    net.save_graph(temp_path)
-                    
-                    # Read content with retry mechanism
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            time.sleep(0.1)  # Small delay
-                            with open(temp_path, 'r', encoding='utf-8') as f:
-                                html_content = f.read()
-                            break
-                        except (PermissionError, OSError) as file_error:
-                            if attempt == max_retries - 1:
-                                raise file_error
-                            time.sleep(0.5)  # Wait before retry
-                    
-                    # Display the graph
-                    st.components.v1.html(html_content, height=height+50)
-                    
-                finally:
-                    # Clean up with retry mechanism
-                    for cleanup_attempt in range(3):
-                        try:
-                            if os.path.exists(temp_path):
-                                time.sleep(0.2)  # Give time for file to be released
-                                os.unlink(temp_path)
-                            break
-                        except (PermissionError, OSError):
-                            if cleanup_attempt < 2:
-                                time.sleep(1)  # Wait longer before retry
-                            # If cleanup fails, log but don't crash
-                            pass
-            
-        except Exception as e:
-            st.error(f"❌ Error creating graph: {str(e)}")
-            
-            # Provide fallback - show graph data as text
-            st.info("💡 Displaying graph data as text instead:")
-            
-            entities = st.session_state.graph_data['entities']
-            relationships = st.session_state.graph_data['relationships']
-            
-            st.write("**🔹 Entities:**")
-            for entity in entities[:10]:  # Show first 10
-                st.write(f"• {entity['label']} ({entity['type']})")
-            if len(entities) > 10:
-                st.write(f"... and {len(entities) - 10} more entities")
-            
-            st.write("**🔗 Relationships:**")
-            for rel in relationships[:10]:  # Show first 10
-                source_label = next((e['label'] for e in entities if e['id'] == rel['source']), rel['source'])
-                target_label = next((e['label'] for e in entities if e['id'] == rel['target']), rel['target'])
-                st.write(f"• {source_label} → {rel['type']} → {target_label}")
-            if len(relationships) > 10:
-                st.write(f"... and {len(relationships) - 10} more relationships")
-            
-            st.info("💡 Try installing required packages: pip install pyvis networkx")
+                if len(rels) > 5:
+                    st.write(f"  ... and {len(rels) - 5} more {rel_type} relationships")
         
-        # Statistics
-        if show_stats:
-            st.write("### 📊 Graph Statistics")
-            entities = st.session_state.graph_data['entities']
-            relationships = st.session_state.graph_data['relationships']
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Entities", len(entities))
-            with col2:
-                st.metric("Total Relationships", len(relationships))
-            with col3:
-                entity_types = {}
-                for entity in entities:
-                    entity_type = entity.get('type', 'unknown')
-                    entity_types[entity_type] = entity_types.get(entity_type, 0) + 1
-                st.metric("Entity Types", len(entity_types))
-            with col4:
-                rel_types = set(rel['type'] for rel in relationships)
-                st.metric("Relationship Types", len(rel_types))
-            
-            # Entity type breakdown
-            st.write("**Entity Types:**")
-            for entity_type, count in sorted(entity_types.items()):
-                st.write(f"• {entity_type.title()}: {count}")
+        # Export options
+        st.subheader("💾 Export Options")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📥 Download Graph Data"):
+                network_data = st.session_state.kg.get_network_view()
+                st.download_button(
+                    "📄 Download as JSON",
+                    json.dumps(network_data, indent=2),
+                    "knowledge_graph.json",
+                    "application/json"
+                )
+        
+        with col2:
+            if st.button("📊 Generate Report"):
+                st.info("📋 Report generation coming soon...")
     
     with tab2:
-        st.header("💬 Chat with Your Data")
+        st.header("💬 Architecture Intelligence Chat")
         
-        if st.session_state.chat_engine is None:
-            st.warning("⚠️ Please process your data first!")
-            return
+        # Show LLM enhancement status
+        if st.session_state.kg.use_llm:
+            st.success("🧠 **AI Enhancement Active** - Get strategic insights with your technical analysis")
+        else:
+            st.info("⚙️ **Configure LLM API Key** for enhanced strategic insights")
+        
+        # Sample question
+        if st.button("💡 What are the risks in our architecture?"):
+            st.session_state.sample_question = "What are the risks in our architecture?"
         
         # Chat interface
-        st.write("Ask questions about your data! Try these examples:")
-        
-        # Example questions
-        examples = [
-            "What applications use Oracle?",
-            "Show all servers",
-            "What software is common?",
-            "Who manages the database?",
-            "Search for Linux"
-        ]
-        
-        cols = st.columns(len(examples))
-        for i, example in enumerate(examples):
-            with cols[i]:
-                if st.button(f"💡 {example}", key=f"example_{i}"):
-                    st.session_state.current_question = example
-        
-        # Question input
         question = st.text_input(
-            "Your Question:", 
-            value=st.session_state.get('current_question', ''),
-            placeholder="Type your question here..."
+            "Ask about your architecture:",
+            value=st.session_state.get('sample_question', ''),
+            placeholder="e.g., 'Analyze the overall architecture', 'What are the dependencies?', 'Show me critical components'"
         )
         
         if question:
-            with st.spinner("🔍 Analyzing your data..."):
+            with st.spinner("🔍 Analyzing architecture..."):
                 try:
                     answer = st.session_state.chat_engine.answer_question(question)
                     st.markdown(answer)
                 except Exception as e:
-                    st.error(f"❌ Error processing question: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
+                    st.info("💡 Try rephrasing your question or check your LLM configuration")
         
-        # Chat history could be added here
-        with st.expander("💡 Question Ideas"):
-            st.write("""
-            **Technology Questions:**
-            • "What applications use [technology]?"
-            • "What software is common?"
-            • "Show technology stack"
+        # Quick action buttons
+        st.subheader("⚡ Quick Analysis")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🏗️ Architecture Overview"):
+                with st.spinner("Analyzing..."):
+                    answer = st.session_state.chat_engine.answer_question("Analyze the overall architecture")
+                    st.markdown(answer)
+        
+        with col2:
+            if st.button("🔗 Dependencies"):
+                with st.spinner("Analyzing..."):
+                    answer = st.session_state.chat_engine.answer_question("What are the dependencies?")
+                    st.markdown(answer)
+        
+        with col3:
+            if st.button("🛡️ Risk Analysis"):
+                with st.spinner("Analyzing..."):
+                    answer = st.session_state.chat_engine.answer_question("What are the risks?")
+                    st.markdown(answer)
+        
+        # Help section
+        with st.expander("💡 Question Examples"):
+            st.markdown("""
+            **🏗️ Architecture Questions:**
+            - "Analyze the overall architecture"
+            - "What are the main components?"
+            - "Describe the [component name]"
             
-            **Management:**
-            • "Who manages [component]?"
-            • "What does [person] manage?"
+            **🔗 Relationship Questions:**
+            - "What are the dependencies?"
+            - "Which components are most connected?"
+            - "Show me the data flow"
             
-            **Location:**
-            • "What is in [location]?"
-            • "Show all locations"
+            **🛡️ Risk & Security:**
+            - "What are the risks in our system?"
+            - "Which components are critical?"
+            - "Show me single points of failure"
             
-            **Search:**
-            • "Search for [term]"
-            • "Find [keyword]"
+            **🛠️ Technology:**
+            - "Analyze our technology stack"
+            - "What technologies are we using?"
+            - "Show technology concentration"
             
-            **Listing:**
-            • "Show all applications"
-            • "List all servers"
+            **👤 Management:**
+            - "Who manages what components?"
+            - "What are the management gaps?"
+            - "Show ownership structure"
             """)
-    
-    with tab3:
-        st.header("📊 Data Analytics")
-        
-        if st.session_state.original_df is None:
-            st.warning("⚠️ No data available for analysis!")
-            return
-        
-        df = st.session_state.original_df
-        
-        # Basic statistics
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("### 📈 Data Overview")
-            st.write(f"**Total Records:** {len(df)}")
-            st.write(f"**Columns:** {len(df.columns)}")
-            st.write(f"**Data Types:**")
-            for dtype in df.dtypes.value_counts().items():
-                st.write(f"• {dtype[0]}: {dtype[1]} columns")
-        
-        with col2:
-            st.write("### 🔍 Missing Data")
-            missing_data = df.isnull().sum()
-            if missing_data.sum() > 0:
-                for col, missing in missing_data.items():
-                    if missing > 0:
-                        percentage = (missing / len(df)) * 100
-                        st.write(f"• {col}: {missing} ({percentage:.1f}%)")
-            else:
-                st.write("✅ No missing data found!")
-        
-        # Column analysis
-        st.write("### 📋 Column Analysis")
-        selected_column = st.selectbox("Select column to analyze:", df.columns)
-        
-        if selected_column:
-            col_data = df[selected_column].dropna()
-            
-            if col_data.dtype == 'object':
-                # Text analysis
-                value_counts = col_data.value_counts().head(10)
-                st.write(f"**Top values in {selected_column}:**")
-                st.bar_chart(value_counts)
-                
-                st.write("**Value distribution:**")
-                for value, count in value_counts.items():
-                    percentage = (count / len(col_data)) * 100
-                    st.write(f"• {value}: {count} ({percentage:.1f}%)")
-            else:
-                # Numeric analysis
-                st.write(f"**Statistics for {selected_column}:**")
-                st.write(col_data.describe())
-    
-    with tab4:
-        st.header("📋 Raw Data")
-        
-        if st.session_state.original_df is None:
-            st.warning("⚠️ No data available!")
-            return
-        
-        df = st.session_state.original_df
-        
-        # Data preview
-        st.write("### 👀 Data Preview")
-        
-        # Filters
-        col1, col2 = st.columns(2)
-        with col1:
-            show_rows = st.number_input("Rows to show:", 1, len(df), min(50, len(df)))
-        with col2:
-            search_term = st.text_input("Search in data:", placeholder="Enter search term...")
-        
-        # Apply search filter
-        display_df = df.copy()
-        if search_term:
-            # Search across all columns
-            mask = display_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False, na=False)).any(axis=1)
-            display_df = display_df[mask]
-            st.write(f"📍 Found {len(display_df)} rows containing '{search_term}'")
-        
-        # Display data
-        st.dataframe(display_df.head(show_rows), use_container_width=True)
-        
-        # Download options
-        st.write("### 💾 Download Options")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            csv_data = df.to_csv(index=False)
-            st.download_button(
-                "📥 Download as CSV",
-                csv_data,
-                "knowledge_graph_data.csv",
-                "text/csv"
-            )
-        
-        with col2:
-            if st.session_state.graph_data:
-                graph_json = json.dumps(st.session_state.graph_data, indent=2)
-                st.download_button(
-                    "📥 Download Graph JSON",
-                    graph_json,
-                    "knowledge_graph.json",
-                    "application/json"
-                )
 
 if __name__ == "__main__":
     main()
