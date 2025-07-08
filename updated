@@ -1,0 +1,136 @@
+# langgraph_poc.py
+
+import streamlit as st
+import pandas as pd
+from docx import Document
+import json
+import base64
+import re
+import requests
+from langgraph.graph import StateGraph
+from pyvis.network import Network
+import tempfile
+import os
+import streamlit.components.v1 as components
+from typing import TypedDict
+
+# =======================
+# 🔧 LLM CONFIG
+# =======================
+LLM_API_URL = "https://your-llm-endpoint.com/v1/chat/completions"
+LLM_USERNAME = "your_username_here"
+LLM_PASSWORD = "your_password_here"
+
+def get_basic_auth():
+    creds = f"{LLM_USERNAME}:{LLM_PASSWORD}"
+    return base64.b64encode(creds.encode()).decode()
+
+# =======================
+# 📄 TEXT EXTRACTORS
+# =======================
+def extract_text_from_file(file):
+    if file.name.endswith(".xlsx"):
+        df = pd.read_excel(file)
+        return df.to_csv(index=False)
+    elif file.name.endswith(".docx"):
+        doc = Document(file)
+        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+    return ""
+
+# =======================
+# 🤖 LLM Nodes
+# =======================
+def llm_extract_graph(text):
+    prompt = f"""
+From the following document, extract entities and architecture relationships:
+
+ENTITY TYPES:
+- Application, Database, Component, Business Service, Environment, Application Server, Software, Data Lifecycle Function, Queue Manager, Security Function, Flow, Market Segment, Application Group, APQC, Sub Component
+
+RELATIONSHIP TYPES:
+- USES, RUNS_ON, SUPPORTS, PART_OF, STORES_DATA_IN, DEPLOYED_IN, ALIGNS_WITH, PROVIDES, CONTAINS, RELATED_TO
+
+Document Text:
+{text[:2000]}
+
+Return only JSON in the format:
+{{
+  "nodes": [{{"id": "App1", "type": "Application"}}],
+  "edges": [{{"source": "App1", "target": "DB1", "type": "USES"}}]
+}}
+"""
+    headers = {
+        "Authorization": f"Basic {get_basic_auth()}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {"role": "system", "content": "You extract structured knowledge graph data. Return valid JSON only."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 600
+    }
+    response = requests.post(LLM_API_URL, headers=headers, json=payload)
+    content = response.json()["choices"][0]["message"]["content"]
+    match = re.search(r'{.*}', content, re.DOTALL)
+    return json.loads(match.group()) if match else {"nodes": [], "edges": []}
+
+def llm_arch_summary(text):
+    prompt = f"""
+Summarize this architecture:
+- Identify key components
+- Mention key risks or opportunities
+- Keep it executive friendly
+
+Architecture:
+{text[:2000]}
+"""
+    headers = {
+        "Authorization": f"Basic {get_basic_auth()}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {"role": "system", "content": "You provide strategic IT architecture summaries."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.4,
+        "max_tokens": 400
+    }
+    response = requests.post(LLM_API_URL, headers=headers, json=payload)
+    return response.json()["choices"][0]["message"]["content"]
+
+# =======================
+# 🔍 LangGraph Setup
+# =======================
+class GraphState(TypedDict, total=False):
+    file: any
+    text: str
+    graph: dict
+
+def build_graph_pipeline():
+    g = StateGraph(GraphState)
+
+    def extract_step(state: GraphState) -> GraphState:
+        text = extract_text_from_file(state["file"])
+        return {"text": text}
+
+    def extract_kg_step(state: GraphState) -> GraphState:
+        return {"graph": llm_extract_graph(state["text"])}
+
+    g.add_node("extract_text", extract_step)
+    g.add_node("extract_kg", extract_kg_step)
+
+    g.set_entry_point("extract_text")
+    g.add_edge("extract_text", "extract_kg")
+    g.set_finish_point("extract_kg")
+
+    return g.compile()
+
+# =======================
+# 🌐 Visualization
+# =======================
+# [unchanged below here]
