@@ -7,12 +7,12 @@ import json
 import base64
 import re
 import requests
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
+from typing import TypedDict
 from pyvis.network import Network
 import tempfile
 import os
 import streamlit.components.v1 as components
-from typing import TypedDict
 
 # =======================
 # 🔧 LLM CONFIG
@@ -29,108 +29,144 @@ def get_basic_auth():
 # 📄 TEXT EXTRACTORS
 # =======================
 def extract_text_from_file(file):
-    if file.name.endswith(".xlsx"):
-        df = pd.read_excel(file)
-        return df.to_csv(index=False)
-    elif file.name.endswith(".docx"):
-        doc = Document(file)
-        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+    try:
+        if file.name.endswith(".xlsx"):
+            df = pd.read_excel(file)
+            return df.to_csv(index=False)
+        elif file.name.endswith(".docx"):
+            doc = Document(file)
+            return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        elif file.name.endswith(".csv"):
+            df = pd.read_csv(file)
+            return df.to_csv(index=False)
+    except Exception as e:
+        return f"Error reading file: {e}"
     return ""
 
 # =======================
-# 🤖 LLM Nodes
+# 🤖 LLM Functions
 # =======================
 def llm_extract_graph(text):
-    prompt = f"""
-From the following document, extract entities and architecture relationships:
+    if LLM_USERNAME == "your_username_here":
+        return {
+            "nodes": [{"id": "Web App", "type": "Application"}, {"id": "Database", "type": "Database"}],
+            "edges": [{"source": "Web App", "target": "Database", "type": "USES"}]
+        }
+    
+    prompt = f"""Extract entities and relationships from this document. Return JSON only:
+{{"nodes": [{{"id": "name", "type": "Application|Database|Component"}}], "edges": [{{"source": "A", "target": "B", "type": "USES|RUNS_ON"}}]}}
 
-ENTITY TYPES:
-- Application, Database, Component, Business Service, Environment, Application Server, Software, Data Lifecycle Function, Queue Manager, Security Function, Flow, Market Segment, Application Group, APQC, Sub Component
-
-RELATIONSHIP TYPES:
-- USES, RUNS_ON, SUPPORTS, PART_OF, STORES_DATA_IN, DEPLOYED_IN, ALIGNS_WITH, PROVIDES, CONTAINS, RELATED_TO
-
-Document Text:
-{text[:2000]}
-
-Return only JSON in the format:
-{{
-  "nodes": [{{"id": "App1", "type": "Application"}}],
-  "edges": [{{"source": "App1", "target": "DB1", "type": "USES"}}]
-}}
-"""
-    headers = {
-        "Authorization": f"Basic {get_basic_auth()}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {"role": "system", "content": "You extract structured knowledge graph data. Return valid JSON only."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3,
-        "max_tokens": 600
-    }
-    response = requests.post(LLM_API_URL, headers=headers, json=payload)
-    content = response.json()["choices"][0]["message"]["content"]
-    match = re.search(r'{.*}', content, re.DOTALL)
-    return json.loads(match.group()) if match else {"nodes": [], "edges": []}
-
-def llm_arch_summary(text):
-    prompt = f"""
-Summarize this architecture:
-- Identify key components
-- Mention key risks or opportunities
-- Keep it executive friendly
-
-Architecture:
-{text[:2000]}
-"""
-    headers = {
-        "Authorization": f"Basic {get_basic_auth()}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {"role": "system", "content": "You provide strategic IT architecture summaries."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.4,
-        "max_tokens": 400
-    }
-    response = requests.post(LLM_API_URL, headers=headers, json=payload)
-    return response.json()["choices"][0]["message"]["content"]
+Document: {text[:2000]}"""
+    
+    try:
+        headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
+        payload = {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 600}
+        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+        content = response.json()["choices"][0]["message"]["content"]
+        match = re.search(r'{.*}', content, re.DOTALL)
+        return json.loads(match.group()) if match else {"nodes": [], "edges": []}
+    except:
+        return {"nodes": [], "edges": []}
 
 # =======================
 # 🔍 LangGraph Setup
 # =======================
-class GraphState(TypedDict, total=False):
-    file: any
+class GraphState(TypedDict):
+    file: object
     text: str
     graph: dict
 
+def extract_step(state: GraphState):
+    text = extract_text_from_file(state["file"])
+    return {"text": text}
+
+def extract_kg_step(state: GraphState):
+    graph = llm_extract_graph(state["text"])
+    return {"graph": graph}
+
 def build_graph_pipeline():
-    g = StateGraph(GraphState)
-
-    def extract_step(state: GraphState) -> GraphState:
-        text = extract_text_from_file(state["file"])
-        return {"text": text}
-
-    def extract_kg_step(state: GraphState) -> GraphState:
-        return {"graph": llm_extract_graph(state["text"])}
-
-    g.add_node("extract_text", extract_step)
-    g.add_node("extract_kg", extract_kg_step)
-
-    g.set_entry_point("extract_text")
-    g.add_edge("extract_text", "extract_kg")
-    g.set_finish_point("extract_kg")
-
-    return g.compile()
+    workflow = StateGraph(GraphState)
+    workflow.add_node("extract_text", extract_step)
+    workflow.add_node("extract_kg", extract_kg_step)
+    workflow.set_entry_point("extract_text")
+    workflow.add_edge("extract_text", "extract_kg")
+    workflow.add_edge("extract_kg", END)
+    return workflow.compile()
 
 # =======================
 # 🌐 Visualization
 # =======================
-# [unchanged below here]
+def show_graph(graph_data):
+    try:
+        net = Network(height="600px", width="100%", directed=True, bgcolor="#ffffff")
+        
+        color_map = {"Application": "#6C5CE7", "Database": "#00B894", "Component": "#FAB1A0"}
+        
+        for node in graph_data.get("nodes", []):
+            color = color_map.get(node.get("type", ""), "#BDC3C7")
+            net.add_node(node["id"], label=node["id"], color=color, size=25)
+
+        for edge in graph_data.get("edges", []):
+            net.add_edge(edge["source"], edge["target"], label=edge["type"])
+
+        import uuid
+        temp_file = f"temp_{uuid.uuid4().hex[:8]}.html"
+        temp_path = os.path.join(tempfile.gettempdir(), temp_file)
+        
+        net.save_graph(temp_path)
+        with open(temp_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        components.html(html, height=650)
+        
+        try:
+            os.unlink(temp_path)
+        except:
+            pass
+            
+    except Exception as e:
+        st.error(f"Visualization error: {e}")
+
+# =======================
+# 🖼️ Streamlit UI
+# =======================
+def main():
+    st.title("🔗 Knowledge Graph POC (with LangGraph)")
+    
+    llm_status = "🟢 Active" if LLM_USERNAME != "your_username_here" else "🔴 Demo Mode"
+    st.write(f"**LLM Status:** {llm_status}")
+    
+    uploaded = st.file_uploader("📁 Upload Document", type=["xlsx", "docx", "csv"])
+
+    if uploaded:
+        with st.spinner("🔍 Processing through LangGraph pipeline..."):
+            graph_pipeline = build_graph_pipeline()
+            output = graph_pipeline.invoke({"file": uploaded})
+            kg = output["graph"]
+
+        if kg.get("nodes"):
+            st.success("✅ Knowledge graph generated!")
+            show_graph(kg)
+            
+            if kg.get("nodes"):
+                node_ids = [n['id'] for n in kg["nodes"]]
+                selected_node = st.selectbox("🔍 Select node", node_ids)
+                
+                if selected_node:
+                    node_info = next((n for n in kg["nodes"] if n["id"] == selected_node), None)
+                    related_edges = [e for e in kg["edges"] if e["source"] == selected_node or e["target"] == selected_node]
+                    
+                    st.subheader(f"📌 {selected_node}")
+                    if node_info:
+                        st.write(f"**Type:** {node_info.get('type', 'Unknown')}")
+                    
+                    for rel in related_edges:
+                        direction = "→" if rel["source"] == selected_node else "←"
+                        other = rel["target"] if rel["source"] == selected_node else rel["source"]
+                        st.write(f"• {selected_node} {direction} **{rel['type']}** {direction} {other}")
+            
+            st.download_button("📥 Download JSON", json.dumps(kg, indent=2), file_name="kg.json")
+        else:
+            st.warning("No graph data extracted.")
+
+if __name__ == "__main__":
+    main()
