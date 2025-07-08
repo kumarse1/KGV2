@@ -5,6 +5,10 @@ import json
 from collections import defaultdict
 import requests
 import re
+from pyvis.network import Network
+import tempfile
+import os
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="🔗 Knowledge Graph System", layout="wide")
 
@@ -472,6 +476,128 @@ class EnhancedKnowledgeGraph:
             })
         
         return network_data
+    
+    def create_visual_network(self, height=600):
+        """Create PyVis network visualization"""
+        # Create PyVis network
+        net = Network(
+            height=f"{height}px", 
+            width="100%", 
+            bgcolor="#ffffff", 
+            font_color="black",
+            directed=True
+        )
+        
+        # Configure physics for better layout
+        net.set_options("""
+        var options = {
+          "physics": {
+            "enabled": true,
+            "stabilization": {"iterations": 100},
+            "barnesHut": {
+              "gravitationalConstant": -8000,
+              "centralGravity": 0.3,
+              "springLength": 95,
+              "springConstant": 0.04,
+              "damping": 0.09
+            }
+          },
+          "nodes": {
+            "font": {"size": 12},
+            "borderWidth": 2,
+            "shadow": true
+          },
+          "edges": {
+            "font": {"size": 10},
+            "arrows": {"to": {"enabled": true, "scaleFactor": 1}},
+            "smooth": {"type": "continuous"}
+          }
+        }
+        """)
+        
+        # Color scheme for different entity types
+        type_colors = {
+            'Application': '#FF6B6B',
+            'Database': '#4ECDC4',
+            'Server': '#45B7D1',
+            'Service': '#A8E6CF',
+            'Component': '#FFD93D',
+            'Security Function': '#FF8C42',
+            'Business Service': '#6C5CE7',
+            'Environment': '#74B9FF',
+            'Data': '#55A3FF',
+            'Queue': '#FD79A8',
+            'Software': '#FDCB6E',
+            'Flow': '#E17055',
+            'Person': '#DDA0DD',
+            'Location': '#81ECEC'
+        }
+        
+        # Add nodes
+        for entity in self.entities.values():
+            color = type_colors.get(entity['type'], '#BDC3C7')
+            
+            # Calculate node size based on connections
+            connections = sum(1 for rel in self.relationships 
+                            if rel['source'] == entity['name'] or rel['target'] == entity['name'])
+            size = min(20 + connections * 3, 50)
+            
+            # Create hover tooltip
+            tooltip = f"<b>{entity['name']}</b><br>"
+            tooltip += f"Type: {entity['type']}<br>"
+            tooltip += f"Connections: {connections}<br>"
+            if entity['description']:
+                tooltip += f"Description: {entity['description']}<br>"
+            
+            # Add key properties to tooltip
+            props = entity.get('properties', {})
+            for key, value in list(props.items())[:3]:  # Show first 3 properties
+                if key not in ['name', 'type'] and value:
+                    tooltip += f"{key.title()}: {value}<br>"
+            
+            net.add_node(
+                entity['name'],
+                label=entity['name'],
+                color=color,
+                size=size,
+                title=tooltip,
+                shape='dot'
+            )
+        
+        # Add edges
+        for rel in self.relationships:
+            # Edge colors based on relationship type
+            edge_colors = {
+                'MANAGES': '#E74C3C',
+                'USES': '#3498DB',
+                'DEPENDS_ON': '#E67E22',
+                'LOCATED_IN': '#27AE60',
+                'SUPPORTS': '#9B59B6',
+                'PROCESSES': '#F39C12',
+                'CONNECTS_TO': '#1ABC9C',
+                'SUB_COMPONENT': '#E91E63'
+            }
+            
+            edge_color = edge_colors.get(rel['type'], '#95A5A6')
+            
+            # Edge width based on strength
+            width = 2
+            if rel.get('strength') == 'strong':
+                width = 4
+            elif rel.get('strength') == 'weak':
+                width = 1
+            
+            net.add_edge(
+                rel['source'],
+                rel['target'],
+                label=rel['type'],
+                color=edge_color,
+                width=width,
+                title=rel.get('description', rel['type']),
+                smooth=True
+            )
+        
+        return net
 
 class EnhancedChatEngine:
     """Enhanced chat engine with deep knowledge graph integration"""
@@ -992,9 +1118,149 @@ def main():
         return
     
     # Main tabs
-    tab1, tab2 = st.tabs(["💡 Strategic Dashboard", "💬 Ask Architecture Questions"])
+    tab1, tab2, tab3 = st.tabs(["🌐 Knowledge Graph", "💡 Strategic Dashboard", "💬 Ask Architecture Questions"])
     
     with tab1:
+        st.header("🌐 Interactive Knowledge Graph")
+        
+        # Graph controls
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            graph_height = st.slider("Graph Height", 400, 800, 600, 50)
+        with col2:
+            show_legend = st.checkbox("Show Legend", True)
+        with col3:
+            if st.button("🔄 Refresh Graph"):
+                st.rerun()
+        
+        # Create and display the network graph
+        try:
+            net = st.session_state.kg.create_visual_network(height=graph_height)
+            
+            # Generate HTML with error handling
+            try:
+                # Try to get HTML directly
+                html_content = net.generate_html()
+                components.html(html_content, height=graph_height + 50)
+            except:
+                # Fallback to file method with better error handling
+                import uuid
+                temp_filename = f"kg_graph_{uuid.uuid4().hex[:8]}.html"
+                temp_path = os.path.join(tempfile.gettempdir(), temp_filename)
+                
+                try:
+                    net.save_graph(temp_path)
+                    
+                    # Read with retry
+                    for attempt in range(3):
+                        try:
+                            with open(temp_path, 'r', encoding='utf-8') as f:
+                                html_content = f.read()
+                            break
+                        except:
+                            if attempt < 2:
+                                import time
+                                time.sleep(0.5)
+                            else:
+                                raise
+                    
+                    components.html(html_content, height=graph_height + 50)
+                    
+                finally:
+                    # Cleanup
+                    try:
+                        if os.path.exists(temp_path):
+                            os.unlink(temp_path)
+                    except:
+                        pass
+        
+        except Exception as e:
+            st.error(f"❌ Error creating network graph: {str(e)}")
+            st.info("💡 Make sure PyVis is installed: `pip install pyvis`")
+            
+            # Show text-based network as fallback
+            st.write("### 📊 Network Structure (Text View)")
+            
+            # Show entities by type
+            entity_counts = defaultdict(int)
+            for entity in st.session_state.kg.entities.values():
+                entity_counts[entity['type']] += 1
+            
+            st.write("**📋 Entities by Type:**")
+            for entity_type, count in sorted(entity_counts.items(), key=lambda x: x[1], reverse=True):
+                icon = st.session_state.kg.entity_types.get(entity_type, '🔵')
+                st.write(f"{icon} {entity_type}: {count}")
+            
+            # Show sample relationships
+            st.write("**🔗 Sample Relationships:**")
+            for i, rel in enumerate(st.session_state.kg.relationships[:10]):
+                st.write(f"{i+1}. {rel['source']} → **{rel['type']}** → {rel['target']}")
+        
+        # Legend
+        if show_legend:
+            st.write("### 🎨 Legend")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**🔵 Entity Types:**")
+                type_colors = {
+                    'Application': '🔴',
+                    'Database': '🟢', 
+                    'Server': '🔵',
+                    'Service': '🟣',
+                    'Component': '🟡',
+                    'Security Function': '🟠',
+                    'Business Service': '🟤',
+                    'Environment': '⚫',
+                    'Person': '👤',
+                    'Location': '📍'
+                }
+                
+                for entity_type, icon in type_colors.items():
+                    count = len([e for e in st.session_state.kg.entities.values() if e['type'] == entity_type])
+                    if count > 0:
+                        st.write(f"{icon} {entity_type} ({count})")
+            
+            with col2:
+                st.write("**🔗 Relationship Types:**")
+                rel_types = set(rel['type'] for rel in st.session_state.kg.relationships)
+                relationship_colors = {
+                    'MANAGES': '🔴',
+                    'USES': '🔵',
+                    'DEPENDS_ON': '🟠',
+                    'LOCATED_IN': '🟢',
+                    'SUPPORTS': '🟣',
+                    'PROCESSES': '🟡'
+                }
+                
+                for rel_type in sorted(rel_types):
+                    icon = relationship_colors.get(rel_type, '⚪')
+                    count = len([r for r in st.session_state.kg.relationships if r['type'] == rel_type])
+                    st.write(f"{icon} {rel_type} ({count})")
+        
+        # Graph statistics
+        st.write("### 📊 Graph Statistics")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("🏗️ Total Nodes", len(st.session_state.kg.entities))
+        with col2:
+            st.metric("🔗 Total Edges", len(st.session_state.kg.relationships))
+        with col3:
+            # Calculate average degree
+            if st.session_state.kg.entities:
+                avg_degree = (len(st.session_state.kg.relationships) * 2) / len(st.session_state.kg.entities)
+                st.metric("📈 Avg Degree", f"{avg_degree:.1f}")
+        with col4:
+            # Calculate network density
+            n = len(st.session_state.kg.entities)
+            if n > 1:
+                max_edges = n * (n - 1)
+                density = len(st.session_state.kg.relationships) / max_edges * 100
+                st.metric("🌐 Density", f"{density:.1f}%")
+    
+    with tab3:
         st.header("📊 Strategic Architecture Insights")
         
         # Key metrics
