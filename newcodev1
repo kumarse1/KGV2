@@ -1,4 +1,129 @@
-import streamlit as st
+def extract_json_from_text(text):
+    """Extract JSON from LLM response - ultra-simple approach"""
+    
+    st.write("**🔍 Raw LLM Response (first 500 chars):**")
+    st.code(text[:500])
+    
+    # Skip JSON entirely - just extract entities from text
+    st.write("**🎯 Extracting entities directly from text (no JSON)...**")
+    return extract_entities_from_text(text)
+
+def extract_entities_from_text(text):
+    """Extract entities directly from text without JSON parsing"""
+    
+    # Find all quoted strings (most reliable)
+    quoted_entities = re.findall(r'"([^"]{2,30})"', text)
+    quoted_entities += re.findall(r"'([^']{2,30})'", text)
+    
+    # Find capitalized words (likely entities)
+    capitalized_words = re.findall(r'\b[A-Z][a-zA-Z\s]{2,25}\b', text)
+    
+    # Combine all potential entities
+    all_entities = list(set(quoted_entities + capitalized_words))
+    
+    st.write(f"**Found {len(all_entities)} potential entities:**")
+    for entity in all_entities[:10]:
+        st.write(f"- {entity}")
+    
+    if len(all_entities) < 3:
+        st.warning("Not enough entities found, creating basic demo")
+        return create_minimal_demo_graph()
+    
+    # Create nodes from entities
+    nodes = []
+    for i, entity in enumerate(all_entities[:8]):  # Limit to 8 nodes
+        entity = entity.strip()
+        
+        # Determine type based on keywords
+        if any(word in entity.lower() for word in ['system', 'app', 'portal', 'management']):
+            node_type = "Application"
+        elif any(word in entity.lower() for word in ['database', 'db', 'data']):
+            node_type = "Database"
+        elif any(word in entity.lower() for word in ['server', 'host', 'machine']):
+            node_type = "Server"
+        elif any(word in entity.lower() for word in ['windows', 'linux', 'oracle', 'mysql']):
+            node_type = "Technology"
+        elif len(entity.split()) == 2 and entity.istitle():
+            node_type = "Person"  # Likely a person name
+        else:
+            node_type = "Component"
+        
+        nodes.append({"id": entity, "type": node_type})
+    
+    # Create simple connecting edges
+    edges = []
+    for i in range(len(nodes) - 1):
+        edges.append({
+            "source": nodes[i]['id'],
+            "target": nodes[i + 1]['id'],
+            "type": "CONNECTS_TO"
+        })
+    
+    # Add some management relationships
+    people = [n for n in nodes if n['type'] == 'Person']
+    systems = [n for n in nodes if n['type'] in ['Application', 'Database', 'Server']]
+    
+    for person in people[:2]:  # First 2 people
+        for system in systems[:2]:  # First 2 systems
+            edges.append({
+                "source": person['id'],
+                "target": system['id'],
+                "type": "MANAGES"
+            })
+    
+    result = {"nodes": nodes, "edges": edges}
+    
+    st.success(f"✅ Created graph: {len(nodes)} entities, {len(edges)} relationships")
+    
+    # Show what was created
+    st.write("**Createdef extract_json_from_text(text):
+    """Extract JSON from LLM response - ultra-aggressive approach"""
+    
+    st.write("**🔍 Raw LLM Response (first 500 chars):**")
+    st.code(text[:500])
+    
+    # Ultra-aggressive text cleaning first
+    cleaned_text = ultra_clean_text(text)
+    
+    st.write("**🧹 After ultra-cleaning (first 300 chars):**")
+    st.code(cleaned_text[:300])
+    
+    # Try simple word extraction first (most reliable)
+    simple_result = extract_entities_from_words(cleaned_text)
+    if simple_result:
+        st.success("✅ Simple word extraction worked!")
+        return simple_result
+    
+    # If that fails, try JSON approaches
+    json_patterns = [
+        r'\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\}',
+        r'\{.*?nodes.*?edges.*?\}',
+        r'\{.*?\}',
+    ]
+    
+    for i, pattern in enumerate(json_patterns, 1):
+        try:
+            matches = re.findall(pattern, cleaned_text, re.DOTALL | re.IGNORECASE)
+            for match in matches:
+                st.write(f"**JSON Pattern {i} found:**")
+                st.code(match[:200])
+                
+                fixed_json = ultra_fix_json(match)
+                if fixed_json:
+                    st.success(f"✅ JSON Pattern {i} succeeded!")
+                    return fixed_json
+                    
+        except Exception as e:
+            continue
+    
+    # Final fallback: create from any quoted words
+    st.write("**🎯 Creating graph from any quoted words found...**")
+    return create_graph_from_quotes(cleaned_text)
+
+def ultra_clean_text(text):
+    """Remove everything that could break JSON parsing"""
+    # Remove all control characters and weird whitespace
+    cleaned = re.sub(import streamlit as st
 import pandas as pd
 import json
 import base64
