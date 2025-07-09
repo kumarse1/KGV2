@@ -61,16 +61,98 @@ def extract_data_from_excel(file):
 # =======================
 # 🤖 LLM KNOWLEDGE GRAPH EXTRACTION
 # =======================
+def test_llm_connection():
+    """Test LLM with a simple request to see what format it expects"""
+    st.write("**🧪 Testing LLM with simple request...**")
+    
+    # Simple test prompt
+    test_prompt = "Hello, please respond with: SUCCESS"
+    
+    # Try different payload formats that Llama APIs commonly use
+    payload_formats = [
+        # Format 1: Standard
+        {
+            "inputs": test_prompt,
+            "parameters": {"temperature": 0.1, "max_new_tokens": 50}
+        },
+        # Format 2: Messages format
+        {
+            "messages": [{"role": "user", "content": test_prompt}],
+            "temperature": 0.1,
+            "max_tokens": 50
+        },
+        # Format 3: Prompt field
+        {
+            "prompt": test_prompt,
+            "temperature": 0.1,
+            "max_tokens": 50
+        },
+        # Format 4: Text field
+        {
+            "text": test_prompt,
+            "parameters": {"temperature": 0.1, "max_new_tokens": 50}
+        }
+    ]
+    
+    headers = {
+        "Authorization": f"Basic {get_basic_auth()}", 
+        "Content-Type": "application/json"
+    }
+    
+    for i, payload in enumerate(payload_formats, 1):
+        try:
+            st.write(f"**Testing Format {i}:** {list(payload.keys())}")
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                try:
+                    resp_json = response.json()
+                    st.write(f"✅ Format {i} - Status 200:")
+                    st.json(resp_json)
+                    
+                    # Check if we got actual content
+                    content = ""
+                    if isinstance(resp_json, dict):
+                        for key in ["generated_text", "output", "response", "text", "content"]:
+                            if key in resp_json:
+                                content = resp_json[key]
+                                break
+                    elif isinstance(resp_json, list) and len(resp_json) > 0:
+                        for key in ["generated_text", "output", "response", "text", "content"]:
+                            if key in resp_json[0]:
+                                content = resp_json[0][key]
+                                break
+                    
+                    if content and "SUCCESS" in str(content):
+                        st.success(f"🎉 Format {i} WORKS! Use this format.")
+                        return i, payload_formats[i-1]
+                    else:
+                        st.warning(f"Format {i} returned empty or unexpected content")
+                        
+                except json.JSONDecodeError:
+                    st.error(f"Format {i} - Invalid JSON response")
+                    st.code(response.text[:200])
+            else:
+                st.error(f"Format {i} - Status {response.status_code}: {response.text[:100]}")
+                
+        except Exception as e:
+            st.error(f"Format {i} - Error: {e}")
+    
+    return None, None
+
 def create_knowledge_graph_with_llm(data_summary):
-    """Use LLM to extract knowledge graph - Strong prompt with connection debugging"""
+    """Use LLM to extract knowledge graph - with format testing"""
     
-    # First, let's test the API connection
-    st.write("**🔗 Testing LLM Connection...**")
-    st.write(f"- API URL: {LLM_API_URL}")
-    st.write(f"- Username: {LLM_USERNAME}")
-    st.write(f"- Password: {'*' * len(LLM_PASSWORD) if LLM_PASSWORD else 'Not set'}")
+    # Test LLM first
+    working_format_num, working_format = test_llm_connection()
     
-    # Strong, detailed prompt (your original - it's excellent!)
+    if not working_format:
+        st.error("❌ None of the common API formats worked. Check your LLM API documentation.")
+        return None
+    
+    st.success(f"✅ Using working format {working_format_num}")
+    
+    # Strong prompt
     prompt = f"""You are a KNOWLEDGE GRAPH EXPERT creating a proper semantic network from business data.
 
 KNOWLEDGE GRAPH FUNDAMENTALS:
@@ -126,108 +208,78 @@ EXAMPLE PROPER KNOWLEDGE GRAPH:
 
 RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
 
-    # Call LLM API with detailed debugging
+    # Build payload using working format
+    if "inputs" in working_format:
+        payload = {
+            "inputs": prompt,
+            "parameters": {"temperature": 0.1, "max_new_tokens": 1200}
+        }
+    elif "messages" in working_format:
+        payload = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 1200
+        }
+    elif "prompt" in working_format:
+        payload = {
+            "prompt": prompt,
+            "temperature": 0.1,
+            "max_tokens": 1200
+        }
+    elif "text" in working_format:
+        payload = {
+            "text": prompt,
+            "parameters": {"temperature": 0.1, "max_new_tokens": 1200}
+        }
+    
     try:
         headers = {
             "Authorization": f"Basic {get_basic_auth()}", 
             "Content-Type": "application/json"
         }
-        payload = {
-            "inputs": prompt, 
-            "parameters": {
-                "temperature": 0.1,
-                "max_new_tokens": 1200,
-                "stop": ["\n\nNote:", "\n\nExplanation:", "Here's"]
-            }
-        }
         
-        st.write("**📤 Sending request to LLM...**")
-        st.write(f"- Headers: {headers}")
-        st.write(f"- Payload keys: {list(payload.keys())}")
-        st.write(f"- Prompt length: {len(prompt)} characters")
-        
-        with st.spinner("🧠 LLM is analyzing data..."):
+        with st.spinner("🧠 Creating knowledge graph with working format..."):
             response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=60)
         
-        st.write("**📥 LLM Response Details:**")
-        st.write(f"- Status Code: {response.status_code}")
-        st.write(f"- Response Headers: {dict(response.headers)}")
-        st.write(f"- Response Length: {len(response.text)} characters")
-        
         if response.status_code == 200:
-            try:
-                resp_json = response.json()
-                st.write(f"- JSON Structure: {type(resp_json)}")
-                st.write(f"- JSON Keys: {list(resp_json.keys()) if isinstance(resp_json, dict) else 'Not a dict'}")
-            except:
-                st.error("❌ Response is not valid JSON")
-                st.code(response.text[:500])
-                return None
+            resp_json = response.json()
             
-            # Handle different Llama response formats
+            # Extract content using the same method that worked in test
             content = ""
-            if isinstance(resp_json, list) and len(resp_json) > 0:
-                st.write("- Response is a list")
-                if "generated_text" in resp_json[0]:
-                    content = resp_json[0]["generated_text"]
-                    st.write("- Found 'generated_text' in first list item")
-                else:
-                    content = str(resp_json[0])
-                    st.write("- Using string representation of first item")
-            elif isinstance(resp_json, dict):
-                st.write("- Response is a dict")
-                if "generated_text" in resp_json:
-                    content = resp_json["generated_text"]
-                    st.write("- Found 'generated_text' in dict")
-                elif "output" in resp_json:
-                    content = resp_json["output"]
-                    st.write("- Found 'output' in dict")
-                else:
-                    content = str(resp_json)
-                    st.write(f"- Available keys: {list(resp_json.keys())}")
-            else:
-                content = str(resp_json)
-                st.write("- Using string representation")
+            if isinstance(resp_json, dict):
+                for key in ["generated_text", "output", "response", "text", "content"]:
+                    if key in resp_json and resp_json[key]:
+                        content = resp_json[key]
+                        break
+            elif isinstance(resp_json, list) and len(resp_json) > 0:
+                for key in ["generated_text", "output", "response", "text", "content"]:
+                    if key in resp_json[0] and resp_json[0][key]:
+                        content = resp_json[0][key]
+                        break
             
-            if not content or content.strip() == "":
-                st.error("❌ LLM returned empty content")
-                st.write("**Full response for debugging:**")
+            if not content:
+                st.error("❌ LLM returned empty content even with working format")
                 st.json(resp_json)
                 return None
             
-            # Remove the original prompt from response (Llama often echoes it)
-            if "RETURN ONLY THE KNOWLEDGE GRAPH JSON" in content:
-                content = content.split("RETURN ONLY THE KNOWLEDGE GRAPH JSON")[-1].strip()
-            if "NO EXPLANATIONS:" in content:
-                content = content.split("NO EXPLANATIONS:")[-1].strip()
-            
-            st.write("**🤖 LLM Response (after cleaning):**")
+            st.write("**🤖 LLM Response:**")
             st.code(content[:400] + "..." if len(content) > 400 else content)
             
             # Extract JSON from response
             graph_data = extract_json_from_text(content)
             
             if graph_data and validate_graph(graph_data):
-                st.success(f"✅ Advanced Knowledge Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
+                st.success(f"✅ Knowledge Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
                 return graph_data
             else:
                 st.error("⚠️ Could not extract valid graph from LLM response")
                 return None
         else:
-            st.error(f"❌ LLM API Error: {response.status_code}")
-            st.error(f"Response: {response.text}")
+            st.error(f"❌ LLM API Error: {response.status_code} - {response.text}")
             return None
             
-    except requests.exceptions.Timeout:
-        st.error("❌ Request timed out - LLM took too long to respond")
-        return None
-    except requests.exceptions.ConnectionError:
-        st.error("❌ Connection error - Cannot reach LLM API")
-        return None
     except Exception as e:
-        st.error(f"❌ Unexpected error calling LLM: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+        st.error(f"❌ Error calling LLM: {e}")
         return None
 
 def extract_json_from_text(text):
