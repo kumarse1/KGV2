@@ -46,149 +46,258 @@ def extract_text_from_file(file):
 # =======================
 # 🤖 LLM Functions
 # =======================
-def llm_extract_graph(text):
+def llm_extract_graph(text, structured_summary=""):
     if LLM_USERNAME == "your_username_here":
         return {
             "nodes": [{"id": "Web App", "type": "Application"}, {"id": "Database", "type": "Database"}],
             "edges": [{"source": "Web App", "target": "Database", "type": "USES"}]
         }
     
-    prompt = f"""Extract entities and relationships from this document. Return JSON only:
-{{"nodes": [{{"id": "name", "type": "Application|Database|Component"}}], "edges": [{{"source": "A", "target": "B", "type": "USES|RUNS_ON"}}]}}
+    # Create a comprehensive analysis prompt
+    prompt = f"""You are an expert IT architect analyzing system data to create a comprehensive knowledge graph.
 
-Document: {text[:2000]}"""
+STRUCTURED DATA ANALYSIS:
+{structured_summary}
+
+FULL DATA CONTEXT:
+{text[:4000]}
+
+YOUR TASK:
+1. Analyze the data structure (CSV headers, relationships between columns)
+2. Identify ALL entities mentioned (applications, databases, servers, people, locations, etc.)
+3. Create MEANINGFUL relationships based on data patterns
+4. Ensure nodes are INTERCONNECTED - avoid isolated nodes
+5. Create a realistic architecture view
+
+ANALYSIS GUIDELINES:
+- If there are columns like "Application Name" and "Database Used" - create USES relationships
+- If there are columns like "Owner/Manager" and "System" - create MANAGES relationships  
+- If there are columns like "Location" and "System" - create LOCATED_IN relationships
+- If there are columns like "Environment" and "Application" - create DEPLOYED_IN relationships
+- If systems share same database/location/owner - create shared relationships
+- Look for technology stacks - create RUNS_ON relationships
+- Find dependencies mentioned in any column - create DEPENDS_ON relationships
+
+ENTITY TYPES:
+Application, Database, Server, Component, Business Service, Environment, Application Server, Software, Data Lifecycle Function, Queue Manager, Security Function, Flow, Market Segment, Application Group, Person, Location, Technology
+
+RELATIONSHIP TYPES:
+USES, RUNS_ON, SUPPORTS, PART_OF, STORES_DATA_IN, DEPLOYED_IN, MANAGES, LOCATED_IN, DEPENDS_ON, CONNECTS_TO, PROVIDES, CONTAINS, OWNED_BY, HOSTED_ON
+
+REQUIREMENTS:
+- Create 8-15 nodes minimum (extract more entities from the data)
+- Create 10-20 relationships minimum (ensure high connectivity)
+- Every node should have at least 2 connections
+- Create realistic technology architecture patterns
+- Use exact names from the data
+- Make relationships meaningful and logical
+
+OUTPUT ONLY VALID JSON - NO EXPLANATIONS:
+{{
+  "nodes": [
+    {{"id": "Customer Portal", "type": "Application"}},
+    {{"id": "User Database", "type": "Database"}},
+    {{"id": "Web Server", "type": "Server"}},
+    {{"id": "John Smith", "type": "Person"}},
+    {{"id": "DataCenter A", "type": "Location"}}
+  ],
+  "edges": [
+    {{"source": "Customer Portal", "target": "User Database", "type": "USES"}},
+    {{"source": "Customer Portal", "target": "Web Server", "type": "RUNS_ON"}},
+    {{"source": "John Smith", "target": "Customer Portal", "type": "MANAGES"}},
+    {{"source": "Web Server", "target": "DataCenter A", "type": "LOCATED_IN"}}
+  ]
+}}"""
     
     try:
         headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
+        payload = {"inputs": prompt, "parameters": {"temperature": 0.1, "max_new_tokens": 1200}}
         
-        # Try different payload formats (including Llama-specific)
-        payload_options = [
-            # Format 1: Llama/Ollama format
-            {"model": "llama", "prompt": prompt, "stream": False, "options": {"temperature": 0.3, "num_predict": 600}},
-            
-            # Format 2: Standard Llama API
-            {"inputs": prompt, "parameters": {"temperature": 0.3, "max_new_tokens": 600}},
-            
-            # Format 3: OpenAI-compatible format
-            {"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 600},
-            
-            # Format 4: Simple Llama format
-            {"prompt": prompt, "temperature": 0.3, "max_tokens": 600},
-            
-            # Format 5: Hugging Face format
-            {"inputs": prompt, "options": {"wait_for_model": True}, "parameters": {"temperature": 0.3, "max_length": 600}}
-        ]
+        st.write("**Sending enhanced prompt to LLM...**")
+        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=90)
         
-        for i, payload in enumerate(payload_options):
-            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            resp_json = response.json()
             
-            if response.status_code == 200:
-                # Try different response formats
-                try:
-                    resp_json = response.json()
-                    
-                    # Try different response formats (including Llama)
-                    if "choices" in resp_json:
-                        content = resp_json["choices"][0]["message"]["content"]
-                    # Llama/Ollama response format
-                    elif "response" in resp_json:
-                        content = resp_json["response"]
-                    # Direct text response
-                    elif "text" in resp_json:
-                        content = resp_json["text"]
-                    # Generated text field
-                    elif "generated_text" in resp_json:
-                        content = resp_json["generated_text"]
-                    # Hugging Face format
-                    elif isinstance(resp_json, list) and len(resp_json) > 0:
-                        content = resp_json[0].get("generated_text", str(resp_json))
-                    else:
-                        content = str(resp_json)
-                    
-                    st.write(f"**Success with payload format {i+1}**")
-                    st.write("**LLM Response:**", content)
-                    
-                    # Enhanced JSON extraction for Llama responses
-                    def extract_json_from_text(text):
-                        # Clean the text
-                        text = text.strip()
-                        
-                        # Try multiple JSON extraction methods
-                        json_patterns = [
-                            r'```json\s*(\{.*?\})\s*```',  # JSON in code blocks
-                            r'```\s*(\{.*?\})\s*```',      # JSON in any code block
-                            r'(\{[^{}]*"nodes"[^{}]*\})',   # Look for nodes pattern
-                            r'(\{.*?"nodes".*?\})',         # Broader nodes pattern
-                            r'(\{.*\})',                    # Any JSON-like structure
-                        ]
-                        
-                        for pattern in json_patterns:
-                            matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
-                            for match in matches:
-                                try:
-                                    # Clean up common issues
-                                    cleaned = match.strip()
-                                    # Fix trailing commas
-                                    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
-                                    # Fix single quotes to double quotes
-                                    cleaned = re.sub(r"'([^']*)':", r'"\1":', cleaned)
-                                    
-                                    result = json.loads(cleaned)
-                                    if isinstance(result, dict) and ("nodes" in result or "edges" in result):
-                                        return result
-                                except:
-                                    continue
-                        
-                        # If no JSON found, try to extract entities manually
-                        st.write("**Attempting manual extraction...**")
-                        
-                        # Look for entity mentions
-                        lines = text.split('\n')
-                        nodes = []
-                        edges = []
-                        
-                        for line in lines:
-                            line = line.strip()
-                            # Look for entity patterns
-                            if any(word in line.lower() for word in ['application', 'database', 'component', 'system']):
-                                # Extract potential entity name
-                                words = line.split()
-                                for word in words:
-                                    if len(word) > 3 and word.isalnum():
-                                        nodes.append({"id": word, "type": "Component"})
-                                        if len(nodes) >= 3:  # Limit to prevent too many
-                                            break
-                        
-                        # Create some basic relationships if we have nodes
-                        if len(nodes) >= 2:
-                            edges.append({"source": nodes[0]["id"], "target": nodes[1]["id"], "type": "USES"})
-                        
-                        return {"nodes": nodes[:5], "edges": edges[:3]} if nodes else None
-                    
-                    # Try to extract JSON
-                    result = extract_json_from_text(content)
-                    
-                    if result:
-                        st.write("**Extracted JSON:**", result)
-                        return result
-                    else:
-                        st.error("Could not extract valid JSON from response")
-                        st.write("**Raw response for debugging:**", content[:500])
-                        return {"nodes": [], "edges": []}
-                        
-                except Exception as e:
-                    st.error(f"Response parsing error: {e}")
-                    continue
+            # Parse response
+            if "generated_text" in resp_json:
+                content = resp_json["generated_text"]
+            elif isinstance(resp_json, list) and len(resp_json) > 0:
+                content = resp_json[0].get("generated_text", str(resp_json))
             else:
-                st.write(f"**Payload format {i+1} failed:** {response.status_code} - {response.text}")
-                continue
-        
-        st.error("All payload formats failed")
-        return {"nodes": [], "edges": []}
+                content = str(resp_json)
+            
+            st.write("**LLM Response Length:**", len(content))
+            
+            # Enhanced JSON extraction with validation
+            def extract_and_validate_json(text):
+                # Try different extraction patterns
+                patterns = [
+                    r'```json\s*(\{.*?\})\s*```',
+                    r'```\s*(\{.*?\})\s*```',
+                    r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})',
+                    r'(\{.*?"nodes".*?"edges".*?\})',
+                ]
+                
+                for pattern in patterns:
+                    matches = re.findall(pattern, text, re.DOTALL)
+                    for match in matches:
+                        try:
+                            cleaned = match.strip()
+                            # Fix common JSON issues
+                            cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
+                            cleaned = re.sub(r"'([^']*)':", r'"\1":', cleaned)
+                            
+                            result = json.loads(cleaned)
+                            
+                            # Validate structure
+                            if (isinstance(result, dict) and 
+                                "nodes" in result and "edges" in result and
+                                isinstance(result["nodes"], list) and 
+                                isinstance(result["edges"], list)):
+                                
+                                # Check for minimum requirements
+                                if len(result["nodes"]) >= 3 and len(result["edges"]) >= 3:
+                                    st.write(f"**✅ Valid JSON extracted: {len(result['nodes'])} nodes, {len(result['edges'])} edges**")
+                                    return result
+                                    
+                        except Exception as e:
+                            continue
+                
+                return None
+            
+            # Try to extract valid JSON
+            result = extract_and_validate_json(content)
+            
+            if result:
+                return result
+            else:
+                st.error("❌ Could not extract valid JSON from LLM")
+                return create_fallback_graph(text, structured_summary)
+        else:
+            st.error(f"LLM API error: {response.status_code}")
+            return create_fallback_graph(text, structured_summary)
             
     except Exception as e:
         st.error(f"LLM call failed: {e}")
-        return {"nodes": [], "edges": []}
+        return create_fallback_graph(text, structured_summary)
+
+def create_fallback_graph(text, structured_summary):
+    """Create a basic but connected graph from the data"""
+    st.write("**Creating fallback graph from data...**")
+    
+    nodes = []
+    edges = []
+    
+    # Extract from structured summary if available
+    if structured_summary and "HEADERS:" in structured_summary:
+        lines = structured_summary.split('\n')
+        headers = []
+        data_rows = []
+        
+        for line in lines:
+            if line.startswith("HEADERS:"):
+                try:
+                    headers = eval(line.split("HEADERS: ")[1])
+                except:
+                    headers = line.split("HEADERS: ")[1].strip("[]'\"").split(", ")
+            elif line.startswith("Row "):
+                try:
+                    row_data = eval(line.split(": ")[1])
+                    data_rows.append(row_data)
+                except:
+                    continue
+        
+        # Create nodes from data
+        entity_set = set()
+        for row in data_rows:
+            for key, value in row.items():
+                if value and len(str(value)) > 2:
+                    entity_set.add((str(value), determine_entity_type(key, str(value))))
+        
+        # Add nodes
+        for entity, entity_type in list(entity_set)[:10]:
+            nodes.append({"id": entity, "type": entity_type})
+        
+        # Create relationships based on data patterns
+        for row in data_rows:
+            row_entities = [(str(v), k) for k, v in row.items() if v and len(str(v)) > 2]
+            
+            # Create relationships between entities in the same row
+            for i in range(len(row_entities)):
+                for j in range(i + 1, len(row_entities)):
+                    entity1, col1 = row_entities[i]
+                    entity2, col2 = row_entities[j]
+                    
+                    relationship = determine_relationship(col1, col2)
+                    if relationship:
+                        edges.append({
+                            "source": entity1,
+                            "target": entity2,
+                            "type": relationship
+                        })
+    
+    # Ensure minimum nodes
+    if len(nodes) < 4:
+        nodes.extend([
+            {"id": "System A", "type": "Application"},
+            {"id": "Database 1", "type": "Database"},
+            {"id": "Server 1", "type": "Server"},
+            {"id": "Admin User", "type": "Person"}
+        ])
+    
+    # Ensure minimum edges
+    if len(edges) < 3:
+        edges.extend([
+            {"source": "System A", "target": "Database 1", "type": "USES"},
+            {"source": "System A", "target": "Server 1", "type": "RUNS_ON"},
+            {"source": "Admin User", "target": "System A", "type": "MANAGES"}
+        ])
+    
+    st.write(f"**Fallback graph created: {len(nodes)} nodes, {len(edges)} edges**")
+    return {"nodes": nodes[:12], "edges": edges[:15]}
+
+def determine_entity_type(column_name, value):
+    """Determine entity type based on column name and value"""
+    col_lower = column_name.lower()
+    val_lower = value.lower()
+    
+    if any(word in col_lower for word in ['app', 'application', 'system']):
+        return 'Application'
+    elif any(word in col_lower for word in ['database', 'db']):
+        return 'Database'
+    elif any(word in col_lower for word in ['server', 'host']):
+        return 'Server'
+    elif any(word in col_lower for word in ['owner', 'manager', 'admin', 'user']):
+        return 'Person'
+    elif any(word in col_lower for word in ['location', 'site', 'datacenter']):
+        return 'Location'
+    elif any(word in col_lower for word in ['env', 'environment']):
+        return 'Environment'
+    elif any(word in val_lower for word in ['oracle', 'mysql', 'sql']):
+        return 'Database'
+    elif any(word in val_lower for word in ['java', 'python', 'linux', 'windows']):
+        return 'Technology'
+    else:
+        return 'Component'
+
+def determine_relationship(col1, col2):
+    """Determine relationship type between two columns"""
+    col1_lower = col1.lower()
+    col2_lower = col2.lower()
+    
+    if any(word in col1_lower for word in ['owner', 'manager']) and any(word in col2_lower for word in ['app', 'system']):
+        return 'MANAGES'
+    elif any(word in col1_lower for word in ['app', 'system']) and any(word in col2_lower for word in ['database', 'db']):
+        return 'USES'
+    elif any(word in col1_lower for word in ['app', 'system']) and any(word in col2_lower for word in ['server', 'host']):
+        return 'RUNS_ON'
+    elif any(word in col1_lower for word in ['system']) and any(word in col2_lower for word in ['location', 'site']):
+        return 'LOCATED_IN'
+    elif any(word in col1_lower for word in ['app', 'system']) and any(word in col2_lower for word in ['env', 'environment']):
+        return 'DEPLOYED_IN'
+    else:
+        return 'RELATED_TO'
 
 # =======================
 # 🔍 LangGraph Setup
@@ -204,6 +313,7 @@ def extract_step(state: GraphState):
     st.write("**Extracted Text Length:**", len(text))
     
     # Better data structure analysis
+    structured_summary = ""
     if text:
         lines = text.split('\n')
         if len(lines) > 1:
@@ -226,11 +336,11 @@ def extract_step(state: GraphState):
             # Create structured data summary for better LLM understanding
             structured_summary = f"HEADERS: {headers}\n\nSAMPLE DATA:\n"
             for i, row in enumerate(sample_rows):
-                structured_summary += f"Row {i+1}: {dict(zip(headers, row))}\n"
-            
-            return {"text": text, "structured_summary": structured_summary}
+                if len(row) == len(headers):
+                    row_dict = dict(zip(headers, row))
+                    structured_summary += f"Row {i+1}: {row_dict}\n"
     
-    return {"text": text, "structured_summary": ""}
+    return {"text": text, "structured_summary": structured_summary}
 
 def extract_kg_step(state: GraphState):
     return {"graph": llm_extract_graph(state["text"], state.get("structured_summary", ""))}
@@ -251,15 +361,38 @@ def show_graph(graph_data):
     try:
         net = Network(height="600px", width="100%", directed=True, bgcolor="#ffffff")
         
-        color_map = {"Application": "#6C5CE7", "Database": "#00B894", "Component": "#FAB1A0"}
-        
+        color_map = {
+            "Application": "#6C5CE7",
+            "Database": "#00B894",
+            "Server": "#636E72",
+            "Component": "#FAB1A0",
+            "Person": "#FD79A8",
+            "Location": "#81ECEC",
+            "Environment": "#74B9FF",
+            "Technology": "#FDCB6E"
+        }
+
+        # Add nodes
         for node in graph_data.get("nodes", []):
             color = color_map.get(node.get("type", ""), "#BDC3C7")
-            net.add_node(node["id"], label=node["id"], color=color, size=25)
+            net.add_node(
+                node["id"], 
+                label=node["id"], 
+                title=f"Type: {node.get('type', 'Unknown')}", 
+                color=color,
+                size=25
+            )
 
+        # Add edges
         for edge in graph_data.get("edges", []):
-            net.add_edge(edge["source"], edge["target"], label=edge["type"])
+            net.add_edge(
+                edge["source"], 
+                edge["target"], 
+                label=edge["type"],
+                color="#666666"
+            )
 
+        # Generate and display
         import uuid
         temp_file = f"temp_{uuid.uuid4().hex[:8]}.html"
         temp_path = os.path.join(tempfile.gettempdir(), temp_file)
@@ -269,6 +402,7 @@ def show_graph(graph_data):
             html = f.read()
         components.html(html, height=650)
         
+        # Cleanup
         try:
             os.unlink(temp_path)
         except:
@@ -293,11 +427,13 @@ def main():
             graph_pipeline = build_graph_pipeline()
             output = graph_pipeline.invoke({"file": uploaded})
             kg = output["graph"]
+            text = output["text"]
 
         if kg.get("nodes"):
             st.success("✅ Knowledge graph generated!")
             show_graph(kg)
             
+            # Node details
             if kg.get("nodes"):
                 node_ids = [n['id'] for n in kg["nodes"]]
                 selected_node = st.selectbox("🔍 Select node", node_ids)
@@ -310,12 +446,98 @@ def main():
                     if node_info:
                         st.write(f"**Type:** {node_info.get('type', 'Unknown')}")
                     
-                    for rel in related_edges:
-                        direction = "→" if rel["source"] == selected_node else "←"
-                        other = rel["target"] if rel["source"] == selected_node else rel["source"]
-                        st.write(f"• {selected_node} {direction} **{rel['type']}** {direction} {other}")
+                    if related_edges:
+                        st.write("**Connections:**")
+                        for rel in related_edges:
+                            direction = "→" if rel["source"] == selected_node else "←"
+                            other = rel["target"] if rel["source"] == selected_node else rel["source"]
+                            st.write(f"• {selected_node} {direction} **{rel['type']}** {direction} {other}")
             
             st.download_button("📥 Download JSON", json.dumps(kg, indent=2), file_name="kg.json")
+            
+            # Enhanced Chat interface
+            st.markdown("---")
+            st.subheader("💬 Chat About Your Architecture")
+            
+            # Initialize chat history
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+            
+            # Display chat history
+            for i, chat in enumerate(st.session_state.chat_history):
+                with st.container():
+                    st.markdown(f"**🙋 Q{i+1}:** {chat['question']}")
+                    st.markdown(f"**🤖 A:** {chat['answer']}")
+                    st.divider()
+            
+            # Chat input
+            user_question = st.text_input("Ask about your architecture:", 
+                                        placeholder="e.g., What are the main components? How do they connect?", 
+                                        key="chat_input")
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                ask_button = st.button("💬 Ask", type="primary")
+            with col2:
+                if st.button("🗑️ Clear Chat"):
+                    st.session_state.chat_history = []
+                    st.rerun()
+            
+            if ask_button and user_question:
+                if LLM_USERNAME == "your_username_here":
+                    st.info("Configure LLM credentials for chat.")
+                else:
+                    # Build context
+                    graph_context = ""
+                    if kg.get("nodes"):
+                        graph_context += "ENTITIES:\n"
+                        for node in kg["nodes"]:
+                            graph_context += f"- {node['id']} ({node['type']})\n"
+                        graph_context += "\nRELATIONSHIPS:\n"
+                        for edge in kg["edges"]:
+                            graph_context += f"- {edge['source']} {edge['type']} {edge['target']}\n"
+                    
+                    prompt = f"""Answer this question about the architecture:
+
+{graph_context}
+
+DOCUMENT: {text[:1500]}
+
+QUESTION: {user_question}
+
+ANSWER:"""
+                    
+                    try:
+                        headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
+                        payload = {"inputs": prompt, "parameters": {"temperature": 0.4, "max_new_tokens": 400}}
+                        
+                        with st.spinner("🔍 Analyzing..."):
+                            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+                            
+                            if response.status_code == 200:
+                                resp_json = response.json()
+                                
+                                if "generated_text" in resp_json:
+                                    answer = resp_json["generated_text"]
+                                elif isinstance(resp_json, list) and len(resp_json) > 0:
+                                    answer = resp_json[0].get("generated_text", str(resp_json))
+                                else:
+                                    answer = str(resp_json)
+                                
+                                # Clean answer
+                                if "ANSWER:" in answer:
+                                    answer = answer.split("ANSWER:")[-1].strip()
+                                
+                                # Add to chat history
+                                st.session_state.chat_history.append({
+                                    "question": user_question,
+                                    "answer": answer
+                                })
+                                st.rerun()
+                            else:
+                                st.error(f"Chat error: {response.status_code}")
+                    except Exception as e:
+                        st.error(f"Chat error: {e}")
         else:
             st.warning("No graph data extracted.")
 
