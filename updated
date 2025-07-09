@@ -190,34 +190,30 @@ def llm_extract_graph(text, structured_summary=""):
     if LLM_USERNAME == "your_username_here":
         return create_demo_graph()
     
-    # Enhanced prompt for better connectivity
-    prompt = f"""Analyze this data and create a HIGHLY CONNECTED knowledge graph showing all relationships.
+    # Enhanced prompt specifically for business systems data
+    prompt = f"""You are analyzing business systems data. Extract ALL actual system names, owners, and technologies from this data.
 
-DATA STRUCTURE:
 {structured_summary}
 
-FULL DATA:
-{text[:2500]}
+CRITICAL INSTRUCTIONS:
+1. Use EXACT system names from the data (like "Risk Management System", "Customer Relationship Management")
+2. Use EXACT owner names (like "John Smith", "Jane Doe")
+3. Use EXACT technology names (like "Oracle", "MySQL", "Linux")
+4. Use EXACT locations (like "Windows", "SQ", "SQL Server")
+5. Create relationships based on data patterns:
+   - Owner MANAGES System
+   - System USES Technology
+   - System LOCATED_IN Location
+   - Systems with same owner/tech/location are RELATED
 
-CRITICAL REQUIREMENTS:
-1. Extract ALL entities from the data
-2. Create MAXIMUM connections between entities
-3. If entities share ANY attribute (owner, location, technology), connect them
-4. Every entity must connect to at least 2 others
-5. Look for indirect relationships (A uses B, B runs on C = A depends on C)
+RETURN ONLY JSON with ACTUAL names from the data:
+{{"nodes": [{{"id": "EXACT_SYSTEM_NAME", "type": "Application"}}, {{"id": "EXACT_OWNER_NAME", "type": "Person"}}], "edges": [{{"source": "EXACT_OWNER", "target": "EXACT_SYSTEM", "type": "MANAGES"}}]}}
 
-ENTITY TYPES: Application, Database, Server, Person, Location, Technology, Environment, Component
-
-RELATIONSHIP TYPES: USES, MANAGES, RUNS_ON, LOCATED_IN, DEPENDS_ON, SHARES_RESOURCE, CONNECTS_TO, DEPLOYED_IN
-
-EXAMPLE - Show maximum connectivity:
-{{"nodes": [{{"id": "App1", "type": "Application"}}, {{"id": "DB1", "type": "Database"}}, {{"id": "Server1", "type": "Server"}}, {{"id": "John", "type": "Person"}}, {{"id": "DataCenter-A", "type": "Location"}}], "edges": [{{"source": "App1", "target": "DB1", "type": "USES"}}, {{"source": "App1", "target": "Server1", "type": "RUNS_ON"}}, {{"source": "John", "target": "App1", "type": "MANAGES"}}, {{"source": "Server1", "target": "DataCenter-A", "type": "LOCATED_IN"}}, {{"source": "DB1", "target": "DataCenter-A", "type": "LOCATED_IN"}}, {{"source": "App1", "target": "DataCenter-A", "type": "DEPENDS_ON"}}]}}
-
-RETURN ONLY JSON:"""
+JSON:"""
     
     try:
         headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
-        payload = {"inputs": prompt, "parameters": {"temperature": 0.1, "max_new_tokens": 800}}
+        payload = {"inputs": prompt, "parameters": {"temperature": 0.05, "max_new_tokens": 1000}}
         
         response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=60)
         
@@ -231,21 +227,160 @@ RETURN ONLY JSON:"""
             else:
                 content = str(resp_json)
             
+            st.write("**🔍 LLM Processing Result:**")
+            st.code(content[:800])
+            
             # Extract JSON
             extracted_json = extract_json_multiple_ways(content)
             
-            if extracted_json:
-                # Enhance connectivity
-                enhanced_graph = enhance_graph_connectivity(extracted_json, structured_summary)
-                return enhanced_graph
+            if extracted_json and len(extracted_json.get('nodes', [])) > 3:
+                st.success(f"✅ Extracted {len(extracted_json['nodes'])} nodes, {len(extracted_json['edges'])} edges")
+                return extracted_json
             else:
-                return create_intelligent_fallback(text, structured_summary)
+                st.warning("⚠️ LLM didn't extract enough entities, creating from raw data")
+                return create_rich_fallback_from_csv(structured_summary)
         else:
-            return create_intelligent_fallback(text, structured_summary)
+            st.error(f"LLM API error: {response.status_code}")
+            return create_rich_fallback_from_csv(structured_summary)
             
     except Exception as e:
-        st.error(f"LLM error: {e}")
-        return create_intelligent_fallback(text, structured_summary)
+        st.error(f"LLM call failed: {e}")
+        return create_rich_fallback_from_csv(structured_summary)
+
+def create_rich_fallback_from_csv(structured_summary):
+    """Create rich knowledge graph directly from CSV data"""
+    st.write("**🛠️ Creating knowledge graph from your actual data...**")
+    
+    nodes = []
+    edges = []
+    
+    if "SAMPLE DATA ROWS:" in structured_summary:
+        # Parse the structured summary
+        lines = structured_summary.split('\n')
+        data_rows = []
+        
+        for line in lines:
+            if line.startswith("Row") and ":" in line:
+                try:
+                    # Extract the row data
+                    row_str = line.split(": ", 1)[1]
+                    row_data = eval(row_str)  # Convert string dict to actual dict
+                    data_rows.append(row_data)
+                except:
+                    continue
+        
+        st.write(f"**📊 Processing {len(data_rows)} data rows...**")
+        
+        # Extract entities from actual data
+        systems = set()
+        owners = set()
+        technologies = set()
+        locations = set()
+        
+        for row in data_rows:
+            for key, value in row.items():
+                if value and value.strip():
+                    key_lower = key.lower()
+                    
+                    # Identify system names
+                    if any(word in key_lower for word in ['system', 'application', 'service', 'management']):
+                        systems.add(value.strip())
+                    
+                    # Identify owners
+                    elif any(word in key_lower for word in ['owner', 'responsible', 'manager']):
+                        owners.add(value.strip())
+                    
+                    # Identify technologies
+                    elif any(word in key_lower for word in ['technology', 'database', 'tech', 'platform']):
+                        if value.strip().lower() in ['oracle', 'mysql', 'linux', 'windows', 'sql server', 'java', 'python']:
+                            technologies.add(value.strip())
+                    
+                    # Identify locations
+                    elif any(word in key_lower for word in ['location', 'site', 'environment', 'datacenter']):
+                        locations.add(value.strip())
+        
+        # Create nodes
+        for system in list(systems)[:20]:  # Limit to prevent overwhelming
+            nodes.append({"id": system, "type": "Application"})
+        
+        for owner in list(owners)[:10]:
+            nodes.append({"id": owner, "type": "Person"})
+        
+        for tech in list(technologies)[:10]:
+            nodes.append({"id": tech, "type": "Technology"})
+        
+        for location in list(locations)[:10]:
+            nodes.append({"id": location, "type": "Location"})
+        
+        # Create relationships based on data patterns
+        for row in data_rows:
+            row_system = None
+            row_owner = None
+            row_tech = None
+            row_location = None
+            
+            # Find entities in this row
+            for key, value in row.items():
+                if value and value.strip():
+                    key_lower = key.lower()
+                    
+                    if any(word in key_lower for word in ['system', 'application', 'service', 'management']):
+                        row_system = value.strip()
+                    elif any(word in key_lower for word in ['owner', 'responsible', 'manager']):
+                        row_owner = value.strip()
+                    elif any(word in key_lower for word in ['technology', 'database', 'tech', 'platform']):
+                        if value.strip().lower() in ['oracle', 'mysql', 'linux', 'windows', 'sql server', 'java', 'python']:
+                            row_tech = value.strip()
+                    elif any(word in key_lower for word in ['location', 'site', 'environment', 'datacenter']):
+                        row_location = value.strip()
+            
+            # Create relationships
+            if row_owner and row_system:
+                edges.append({"source": row_owner, "target": row_system, "type": "MANAGES"})
+            
+            if row_system and row_tech:
+                edges.append({"source": row_system, "target": row_tech, "type": "USES"})
+            
+            if row_system and row_location:
+                edges.append({"source": row_system, "target": row_location, "type": "LOCATED_IN"})
+        
+        # Add some interconnections for systems with same owner/tech
+        owner_systems = defaultdict(list)
+        tech_systems = defaultdict(list)
+        
+        for edge in edges:
+            if edge['type'] == 'MANAGES':
+                owner_systems[edge['source']].append(edge['target'])
+            elif edge['type'] == 'USES':
+                tech_systems[edge['target']].append(edge['source'])
+        
+        # Connect systems with same owner
+        for owner, systems in owner_systems.items():
+            for i in range(len(systems)):
+                for j in range(i+1, len(systems)):
+                    edges.append({
+                        "source": systems[i],
+                        "target": systems[j],
+                        "type": "SHARED_OWNER"
+                    })
+        
+        # Connect systems using same technology
+        for tech, systems in tech_systems.items():
+            for i in range(len(systems)):
+                for j in range(i+1, len(systems)):
+                    edges.append({
+                        "source": systems[i],
+                        "target": systems[j],
+                        "type": "SHARED_TECHNOLOGY"
+                    })
+        
+        st.success(f"✅ Created graph with {len(nodes)} nodes and {len(edges)} edges from your actual data!")
+        return {"nodes": nodes, "edges": edges}
+    
+    else:
+        # Fallback to demo data
+        st.warning("⚠️ Could not parse structured data, using demo graph")
+        return create_demo_graph()
 
 def enhance_graph_connectivity(graph_data, structured_summary):
     """Enhance graph connectivity based on data patterns"""
@@ -618,19 +753,38 @@ def extract_step(state: GraphState):
     if text:
         lines = text.split('\n')
         if len(lines) > 1:
-            headers = lines[0].split(',') if ',' in lines[0] else lines[0].split('\t')
+            # Parse CSV properly
+            headers = [h.strip() for h in lines[0].split(',')]
+            st.write("**📋 Detected Headers:**", headers)
             
-            sample_rows = []
-            for i in range(1, min(4, len(lines))):
+            # Parse actual data rows
+            data_rows = []
+            for i in range(1, min(len(lines), 21)):  # Show first 20 rows
                 if lines[i].strip():
-                    row_data = lines[i].split(',') if ',' in lines[i] else lines[i].split('\t')
-                    sample_rows.append(row_data)
+                    row_data = [cell.strip() for cell in lines[i].split(',')]
+                    if len(row_data) == len(headers):
+                        data_rows.append(dict(zip(headers, row_data)))
             
-            structured_summary = f"HEADERS: {headers}\n\nSAMPLE DATA:\n"
-            for i, row in enumerate(sample_rows):
-                if len(row) == len(headers):
-                    row_dict = dict(zip(headers, row))
-                    structured_summary += f"Row {i+1}: {row_dict}\n"
+            if data_rows:
+                st.write("**📊 Sample Data (First 5 rows):**")
+                for i, row in enumerate(data_rows[:5]):
+                    st.write(f"Row {i+1}: {row}")
+                
+                # Create detailed structured summary
+                structured_summary = f"CSV DATA ANALYSIS:\n\n"
+                structured_summary += f"HEADERS: {headers}\n\n"
+                structured_summary += f"TOTAL ROWS: {len(lines)-1}\n\n"
+                structured_summary += f"SAMPLE DATA ROWS:\n"
+                
+                for i, row in enumerate(data_rows[:10]):
+                    structured_summary += f"Row {i+1}: {row}\n"
+                
+                # Analyze column types
+                structured_summary += f"\nCOLUMN ANALYSIS:\n"
+                for header in headers:
+                    values = [row.get(header, '') for row in data_rows if row.get(header, '').strip()]
+                    unique_values = list(set(values))[:5]  # First 5 unique values
+                    structured_summary += f"- {header}: {unique_values}\n"
     
     return {"text": text, "structured_summary": structured_summary}
 
