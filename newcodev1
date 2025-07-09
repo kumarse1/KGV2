@@ -1,0 +1,394 @@
+import streamlit as st
+import pandas as pd
+import json
+import base64
+import re
+import requests
+from pyvis.network import Network
+import tempfile
+import os
+import streamlit.components.v1 as components
+
+# =======================
+# 🔧 CONFIGURATION
+# =======================
+st.set_page_config(page_title="Knowledge Graph Builder", layout="wide")
+
+# LLM Configuration
+LLM_API_URL = "https://your-llm-endpoint.com/v1/chat/completions"
+LLM_USERNAME = "your_username_here"  # Replace with actual username
+LLM_PASSWORD = "your_password_here"  # Replace with actual password
+
+def get_basic_auth():
+    """Create basic auth header"""
+    creds = f"{LLM_USERNAME}:{LLM_PASSWORD}"
+    return base64.b64encode(creds.encode()).decode()
+
+# =======================
+# 📄 DATA EXTRACTION
+# =======================
+def extract_data_from_excel(file):
+    """Extract and structure data from Excel file"""
+    try:
+        df = pd.read_excel(file)
+        
+        # Show basic info
+        st.write("**📋 File Info:**")
+        st.write(f"- Rows: {len(df)}")
+        st.write(f"- Columns: {len(df.columns)}")
+        st.write(f"- Headers: {list(df.columns)}")
+        
+        # Show sample data
+        st.write("**📊 Sample Data:**")
+        st.dataframe(df.head())
+        
+        # Create structured summary for LLM
+        summary = f"EXCEL DATA ANALYSIS:\n\n"
+        summary += f"HEADERS: {list(df.columns)}\n\n"
+        summary += f"TOTAL ROWS: {len(df)}\n\n"
+        summary += f"SAMPLE DATA ROWS:\n"
+        
+        for i, row in df.head(10).iterrows():
+            row_dict = row.to_dict()
+            summary += f"Row {i+1}: {row_dict}\n"
+        
+        return summary
+        
+    except Exception as e:
+        st.error(f"Error reading Excel file: {e}")
+        return None
+
+# =======================
+# 🤖 LLM KNOWLEDGE GRAPH EXTRACTION
+# =======================
+def create_knowledge_graph_with_llm(data_summary):
+    """Use LLM to extract knowledge graph"""
+    
+    # Enhanced prompt from your original code
+    prompt = f"""You are a KNOWLEDGE GRAPH EXPERT creating a proper semantic network from business data.
+
+KNOWLEDGE GRAPH FUNDAMENTALS:
+- NOUNS (Entities) = People, Systems, Technologies, Locations, etc.
+- VERBS (Relationships) = Actions/connections between entities
+- GOAL = Reveal HIDDEN CONNECTIONS that aren't obvious from spreadsheet rows
+
+YOUR DATA:
+{data_summary}
+
+KNOWLEDGE GRAPH CREATION INSTRUCTIONS:
+
+1. IDENTIFY NOUNS (ENTITIES):
+   - Extract ALL system names (Risk Management System, Customer Portal, etc.)
+   - Extract ALL person names (John Smith, Jane Doe, etc.)
+   - Extract ALL technologies (Oracle, MySQL, Linux, Windows, etc.)
+   - Extract ALL locations/environments (DataCenter-A, Production, etc.)
+
+2. IDENTIFY VERBS (RELATIONSHIPS):
+   - MANAGES (Person manages System)
+   - USES (System uses Technology)
+   - DEPENDS_ON (System depends on another System)
+   - LOCATED_IN (System located in Location)
+   - SHARES_RESOURCE (Systems share same database/server)
+   - CONNECTS_TO (Systems communicate with each other)
+
+3. DISCOVER HIDDEN CONNECTIONS:
+   - If two systems have same owner → They're RELATED
+   - If two systems use same technology → They SHARE_TECHNOLOGY
+   - If systems are in same location → They SHARE_LOCATION
+   - If one system's data flows to another → They're CONNECTED
+
+4. KNOWLEDGE GRAPH REQUIREMENTS:
+   - Use EXACT names from the data (not generic names)
+   - Every entity should have 2+ connections
+   - Show indirect relationships (A→B, B→C means A depends on C)
+   - Reveal patterns that aren't obvious from individual rows
+
+EXAMPLE PROPER KNOWLEDGE GRAPH:
+{{"nodes": [
+    {{"id": "Risk Management System", "type": "Application"}},
+    {{"id": "John Smith", "type": "Person"}},
+    {{"id": "Oracle Database", "type": "Technology"}},
+    {{"id": "Customer Portal", "type": "Application"}},
+    {{"id": "DataCenter-A", "type": "Location"}}
+], "edges": [
+    {{"source": "John Smith", "target": "Risk Management System", "type": "MANAGES"}},
+    {{"source": "Risk Management System", "target": "Oracle Database", "type": "USES"}},
+    {{"source": "Customer Portal", "target": "Oracle Database", "type": "USES"}},
+    {{"source": "Risk Management System", "target": "Customer Portal", "type": "SHARES_RESOURCE"}},
+    {{"source": "Risk Management System", "target": "DataCenter-A", "type": "LOCATED_IN"}}
+]}}
+
+RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
+
+    # Call LLM API
+    try:
+        headers = {
+            "Authorization": f"Basic {get_basic_auth()}", 
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "inputs": prompt, 
+            "parameters": {
+                "temperature": 0.05, 
+                "max_new_tokens": 1200
+            }
+        }
+        
+        with st.spinner("🧠 LLM is analyzing your data and creating knowledge graph..."):
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            resp_json = response.json()
+            
+            # Extract response text
+            if "generated_text" in resp_json:
+                content = resp_json["generated_text"]
+            elif isinstance(resp_json, list):
+                content = resp_json[0].get("generated_text", str(resp_json))
+            else:
+                content = str(resp_json)
+            
+            st.write("**🤖 LLM Response:**")
+            st.code(content[:500] + "..." if len(content) > 500 else content)
+            
+            # Extract JSON from response
+            graph_data = extract_json_from_text(content)
+            
+            if graph_data and validate_graph(graph_data):
+                st.success(f"✅ Knowledge Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
+                return graph_data
+            else:
+                st.error("⚠️ Could not extract valid graph from LLM response")
+                return None
+        else:
+            st.error(f"LLM API Error: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error calling LLM: {e}")
+        return None
+
+def extract_json_from_text(text):
+    """Extract JSON from LLM response"""
+    # Try multiple patterns to find JSON
+    json_patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+        r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})',
+        r'(\{.*?"nodes".*?"edges".*?\})'
+    ]
+    
+    for pattern in json_patterns:
+        matches = re.findall(pattern, text, re.DOTALL)
+        for match in matches:
+            try:
+                # Clean up the JSON string
+                cleaned = match.strip()
+                cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)  # Remove trailing commas
+                
+                result = json.loads(cleaned)
+                if validate_graph(result):
+                    return result
+            except:
+                continue
+    
+    return None
+
+def validate_graph(graph_data):
+    """Validate graph structure"""
+    return (isinstance(graph_data, dict) and 
+            "nodes" in graph_data and "edges" in graph_data and
+            isinstance(graph_data["nodes"], list) and 
+            isinstance(graph_data["edges"], list) and
+            len(graph_data["nodes"]) >= 3 and
+            len(graph_data["edges"]) >= 2)
+
+# =======================
+# 🎨 VISUALIZATION
+# =======================
+def create_pyvis_graph(graph_data):
+    """Create interactive pyvis visualization"""
+    
+    net = Network(
+        height="600px", 
+        width="100%", 
+        directed=True,
+        bgcolor="#f0f0f0"
+    )
+    
+    # Color scheme for different node types
+    type_colors = {
+        'Application': '#FF6B6B',
+        'Database': '#4ECDC4', 
+        'Server': '#45B7D1',
+        'Person': '#FFA07A',
+        'Location': '#98D8C8',
+        'Technology': '#DDA0DD',
+        'Component': '#D3D3D3'
+    }
+    
+    # Add nodes
+    for node in graph_data['nodes']:
+        node_id = node['id']
+        node_type = node.get('type', 'Component')
+        color = type_colors.get(node_type, '#D3D3D3')
+        
+        net.add_node(
+            node_id,
+            label=node_id,
+            color=color,
+            title=f"Type: {node_type}",
+            size=25
+        )
+    
+    # Add edges
+    for edge in graph_data['edges']:
+        net.add_edge(
+            edge['source'],
+            edge['target'],
+            label=edge['type'],
+            title=f"{edge['source']} {edge['type']} {edge['target']}"
+        )
+    
+    # Set physics options
+    net.set_options("""
+    var options = {
+      "physics": {
+        "enabled": true,
+        "stabilization": {"iterations": 100}
+      }
+    }
+    """)
+    
+    return net
+
+# =======================
+# 🖼️ MAIN UI
+# =======================
+def main():
+    # Header
+    st.title("🔗 Knowledge Graph Builder")
+    st.markdown("Upload an Excel file and let AI create a knowledge graph showing hidden connections!")
+    
+    # LLM Status
+    llm_configured = LLM_USERNAME != "your_username_here"
+    status = "🟢 Connected" if llm_configured else "🔴 Configure LLM credentials"
+    st.sidebar.markdown(f"**LLM Status:** {status}")
+    
+    if not llm_configured:
+        st.sidebar.warning("Update LLM_USERNAME and LLM_PASSWORD in the code")
+    
+    # File upload
+    uploaded_file = st.file_uploader(
+        "📁 Upload Excel File", 
+        type=['xlsx', 'xls'],
+        help="Upload an Excel file with your data"
+    )
+    
+    if uploaded_file:
+        # Extract data
+        data_summary = extract_data_from_excel(uploaded_file)
+        
+        if data_summary:
+            # Create knowledge graph
+            st.markdown("---")
+            st.markdown("### 🧠 Creating Knowledge Graph")
+            
+            if llm_configured:
+                graph_data = create_knowledge_graph_with_llm(data_summary)
+            else:
+                st.error("⚠️ Configure LLM credentials to create knowledge graph")
+                return
+            
+            if not graph_data:
+                st.error("❌ Failed to create knowledge graph")
+                return
+            
+            # Show graph details
+            st.markdown("### 📊 Graph Details")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Entities (Nouns)", len(graph_data['nodes']))
+                
+                # Show entity types
+                entity_types = {}
+                for node in graph_data['nodes']:
+                    node_type = node.get('type', 'Unknown')
+                    if node_type not in entity_types:
+                        entity_types[node_type] = []
+                    entity_types[node_type].append(node['id'])
+                
+                st.write("**Entity Types:**")
+                for etype, entities in entity_types.items():
+                    st.write(f"• **{etype}:** {', '.join(entities[:3])}")
+            
+            with col2:
+                st.metric("Relationships (Verbs)", len(graph_data['edges']))
+                
+                # Show relationship types
+                rel_types = {}
+                for edge in graph_data['edges']:
+                    rel_type = edge.get('type', 'Unknown')
+                    rel_types[rel_type] = rel_types.get(rel_type, 0) + 1
+                
+                st.write("**Relationship Types:**")
+                for rtype, count in rel_types.items():
+                    st.write(f"• **{rtype}:** {count} connections")
+            
+            # Visualization
+            st.markdown("### 🌐 Interactive Knowledge Graph")
+            
+            try:
+                # Create pyvis graph
+                net = create_pyvis_graph(graph_data)
+                
+                # Save to temp file and display
+                import uuid
+                temp_file = f"graph_{uuid.uuid4().hex[:8]}.html"
+                temp_path = os.path.join(tempfile.gettempdir(), temp_file)
+                
+                net.save_graph(temp_path)
+                
+                # Read and display
+                with open(temp_path, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+                
+                components.html(html_content, height=650)
+                
+                # Cleanup
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                    
+            except Exception as e:
+                st.error(f"Visualization error: {e}")
+                st.info("💡 Make sure pyvis is installed: `pip install pyvis`")
+            
+            # Download option
+            st.markdown("### 💾 Export")
+            st.download_button(
+                "📥 Download Graph JSON",
+                json.dumps(graph_data, indent=2),
+                file_name="knowledge_graph.json",
+                mime="application/json"
+            )
+    
+    else:
+        # Instructions
+        st.markdown("""
+        ### 🚀 How it works:
+        
+        1. **Upload** your Excel file
+        2. **AI analyzes** your data to find entities and relationships  
+        3. **Interactive graph** shows hidden connections
+        
+        ### 💡 What you'll discover:
+        - **Entities (Nouns):** Systems, People, Technologies, Locations
+        - **Relationships (Verbs):** Who manages what, what depends on what
+        - **Hidden Connections:** Patterns not obvious from spreadsheet rows
+        """)
+
+if __name__ == "__main__":
+    main()
