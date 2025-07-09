@@ -141,7 +141,7 @@ def test_llm_connection():
     return None, None
 
 def create_knowledge_graph_with_llm(data_summary):
-    """Use LLM to extract knowledge graph - with format testing"""
+    """Use LLM to extract knowledge graph - with format testing and simplified prompt"""
     
     # Test LLM first
     working_format_num, working_format = test_llm_connection()
@@ -152,85 +152,26 @@ def create_knowledge_graph_with_llm(data_summary):
     
     st.success(f"✅ Using working format {working_format_num}")
     
-    # Strong prompt
-    prompt = f"""You are a KNOWLEDGE GRAPH EXPERT creating a proper semantic network from business data.
+    # SIMPLIFIED prompt that works better with Llama
+    prompt = f"""Extract entities and relationships from this business data. Return JSON only.
 
-KNOWLEDGE GRAPH FUNDAMENTALS:
-- NOUNS (Entities) = People, Systems, Technologies, Locations, etc.
-- VERBS (Relationships) = Actions/connections between entities
-- GOAL = Reveal HIDDEN CONNECTIONS that aren't obvious from spreadsheet rows
+Data:
+{data_summary[:1000]}  
 
-YOUR DATA:
-{data_summary}
+Create a knowledge graph with:
+- Entities: People, Systems, Technologies, Locations
+- Relationships: MANAGES, USES, DEPENDS_ON, LOCATED_IN
 
-KNOWLEDGE GRAPH CREATION INSTRUCTIONS:
+Format:
+{{"nodes": [{{"id": "EntityName", "type": "EntityType"}}], "edges": [{{"source": "Source", "target": "Target", "type": "RELATIONSHIP"}}]}}
 
-1. IDENTIFY NOUNS (ENTITIES):
-   - Extract ALL system names (Risk Management System, Customer Portal, etc.)
-   - Extract ALL person names (John Smith, Jane Doe, etc.)
-   - Extract ALL technologies (Oracle, MySQL, Linux, Windows, etc.)
-   - Extract ALL locations/environments (DataCenter-A, Production, etc.)
-
-2. IDENTIFY VERBS (RELATIONSHIPS):
-   - MANAGES (Person manages System)
-   - USES (System uses Technology)
-   - DEPENDS_ON (System depends on another System)
-   - LOCATED_IN (System located in Location)
-   - SHARES_RESOURCE (Systems share same database/server)
-   - CONNECTS_TO (Systems communicate with each other)
-
-3. DISCOVER HIDDEN CONNECTIONS:
-   - If two systems have same owner → They're RELATED
-   - If two systems use same technology → They SHARE_TECHNOLOGY
-   - If systems are in same location → They SHARE_LOCATION
-   - If one system's data flows to another → They're CONNECTED
-
-4. KNOWLEDGE GRAPH REQUIREMENTS:
-   - Use EXACT names from the data (not generic names)
-   - Every entity should have 2+ connections
-   - Show indirect relationships (A→B, B→C means A depends on C)
-   - Reveal patterns that aren't obvious from individual rows
-
-EXAMPLE PROPER KNOWLEDGE GRAPH:
-{{"nodes": [
-    {{"id": "Risk Management System", "type": "Application"}},
-    {{"id": "John Smith", "type": "Person"}},
-    {{"id": "Oracle Database", "type": "Technology"}},
-    {{"id": "Customer Portal", "type": "Application"}},
-    {{"id": "DataCenter-A", "type": "Location"}}
-], "edges": [
-    {{"source": "John Smith", "target": "Risk Management System", "type": "MANAGES"}},
-    {{"source": "Risk Management System", "target": "Oracle Database", "type": "USES"}},
-    {{"source": "Customer Portal", "target": "Oracle Database", "type": "USES"}},
-    {{"source": "Risk Management System", "target": "Customer Portal", "type": "SHARES_RESOURCE"}},
-    {{"source": "Risk Management System", "target": "DataCenter-A", "type": "LOCATED_IN"}}
-]}}
-
-RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
+JSON:"""
 
     # Build payload using working format
-    if "inputs" in working_format:
-        payload = {
-            "inputs": prompt,
-            "parameters": {"temperature": 0.1, "max_new_tokens": 1200}
-        }
-    elif "messages" in working_format:
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-            "max_tokens": 1200
-        }
-    elif "prompt" in working_format:
-        payload = {
-            "prompt": prompt,
-            "temperature": 0.1,
-            "max_tokens": 1200
-        }
-    elif "text" in working_format:
-        payload = {
-            "text": prompt,
-            "parameters": {"temperature": 0.1, "max_new_tokens": 1200}
-        }
+    payload = {
+        "inputs": prompt,
+        "parameters": {"temperature": 0.1, "max_new_tokens": 600}  # Reduced tokens
+    }
     
     try:
         headers = {
@@ -238,8 +179,10 @@ RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
             "Content-Type": "application/json"
         }
         
-        with st.spinner("🧠 Creating knowledge graph with working format..."):
-            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=60)
+        st.write(f"**📝 Simplified prompt length:** {len(prompt)} characters")
+        
+        with st.spinner("🧠 Creating knowledge graph with simplified prompt..."):
+            response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=45)
         
         if response.status_code == 200:
             resp_json = response.json()
@@ -258,12 +201,16 @@ RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
                         break
             
             if not content:
-                st.error("❌ LLM returned empty content even with working format")
-                st.json(resp_json)
-                return None
+                st.error("❌ LLM returned empty content even with simplified prompt")
+                st.write("**Trying even shorter prompt...**")
+                return try_minimal_prompt(data_summary)
+            
+            # Clean response
+            if "JSON:" in content:
+                content = content.split("JSON:")[-1].strip()
             
             st.write("**🤖 LLM Response:**")
-            st.code(content[:400] + "..." if len(content) > 400 else content)
+            st.code(content[:300] + "..." if len(content) > 300 else content)
             
             # Extract JSON from response
             graph_data = extract_json_from_text(content)
@@ -272,14 +219,141 @@ RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
                 st.success(f"✅ Knowledge Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
                 return graph_data
             else:
-                st.error("⚠️ Could not extract valid graph from LLM response")
-                return None
+                st.warning("⚠️ Could not extract valid graph, trying minimal prompt...")
+                return try_minimal_prompt(data_summary)
         else:
             st.error(f"❌ LLM API Error: {response.status_code} - {response.text}")
             return None
             
     except Exception as e:
         st.error(f"❌ Error calling LLM: {e}")
+        return None
+
+def try_minimal_prompt(data_summary):
+    """Last resort: ultra-minimal prompt"""
+    st.write("**🔬 Trying ultra-minimal prompt...**")
+    
+    # Extract just the first few rows of data
+    lines = data_summary.split('\n')
+    sample_data = '\n'.join(lines[:10])  # Just first 10 lines
+    
+    minimal_prompt = f"""Make a simple graph from this data:
+
+{sample_data}
+
+Return this format:
+{{"nodes":[{{"id":"Name","type":"Type"}}],"edges":[{{"source":"A","target":"B","type":"USES"}}]}}"""
+
+    payload = {
+        "inputs": minimal_prompt,
+        "parameters": {"temperature": 0.1, "max_new_tokens": 300}
+    }
+    
+    try:
+        headers = {
+            "Authorization": f"Basic {get_basic_auth()}", 
+            "Content-Type": "application/json"
+        }
+        
+        st.write(f"**📝 Minimal prompt length:** {len(minimal_prompt)} characters")
+        
+        response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            resp_json = response.json()
+            
+            content = ""
+            if isinstance(resp_json, dict) and "generated_text" in resp_json:
+                content = resp_json["generated_text"]
+            elif isinstance(resp_json, list) and len(resp_json) > 0 and "generated_text" in resp_json[0]:
+                content = resp_json[0]["generated_text"]
+            
+            if content:
+                st.write("**🤖 Minimal Response:**")
+                st.code(content)
+                
+                # Try to extract JSON
+                graph_data = extract_json_from_text(content)
+                
+                if graph_data and validate_graph(graph_data):
+                    st.success(f"✅ Minimal Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
+                    return graph_data
+                else:
+                    st.error("❌ Even minimal prompt failed to generate valid graph")
+                    return create_basic_fallback_from_data(data_summary)
+            else:
+                st.error("❌ Minimal prompt also returned empty")
+                return create_basic_fallback_from_data(data_summary)
+        else:
+            st.error(f"❌ Minimal prompt failed: {response.status_code}")
+            return create_basic_fallback_from_data(data_summary)
+            
+    except Exception as e:
+        st.error(f"❌ Minimal prompt error: {e}")
+        return create_basic_fallback_from_data(data_summary)
+
+def create_basic_fallback_from_data(data_summary):
+    """Create a basic graph directly from the data without LLM"""
+    st.write("**🛠️ Creating basic graph from data patterns...**")
+    
+    nodes = []
+    edges = []
+    
+    # Simple pattern matching from the data
+    lines = data_summary.split('\n')
+    
+    # Look for sample data rows
+    for line in lines:
+        if line.startswith("Row") and ":" in line:
+            try:
+                row_str = line.split(": ", 1)[1]
+                row_data = eval(row_str)
+                
+                # Extract entities from row
+                for key, value in row_data.items():
+                    if value and len(str(value).strip()) > 2:
+                        value_clean = str(value).strip()
+                        
+                        # Determine entity type from column name
+                        if any(word in key.lower() for word in ['system', 'application', 'app']):
+                            nodes.append({"id": value_clean, "type": "Application"})
+                        elif any(word in key.lower() for word in ['person', 'owner', 'manager', 'user']):
+                            nodes.append({"id": value_clean, "type": "Person"})
+                        elif any(word in key.lower() for word in ['database', 'db', 'data']):
+                            nodes.append({"id": value_clean, "type": "Database"})
+                        elif any(word in key.lower() for word in ['server', 'host', 'machine']):
+                            nodes.append({"id": value_clean, "type": "Server"})
+                        elif any(word in key.lower() for word in ['location', 'site', 'datacenter']):
+                            nodes.append({"id": value_clean, "type": "Location"})
+                        else:
+                            nodes.append({"id": value_clean, "type": "Component"})
+                
+            except:
+                continue
+    
+    # Remove duplicates
+    unique_nodes = []
+    seen_ids = set()
+    for node in nodes:
+        if node['id'] not in seen_ids:
+            unique_nodes.append(node)
+            seen_ids.add(node['id'])
+    
+    nodes = unique_nodes[:10]  # Limit to 10 nodes
+    
+    # Create simple relationships
+    for i in range(len(nodes) - 1):
+        edges.append({
+            "source": nodes[i]['id'],
+            "target": nodes[i + 1]['id'],
+            "type": "CONNECTS_TO"
+        })
+    
+    if len(nodes) >= 3 and len(edges) >= 2:
+        st.success(f"✅ Basic graph created: {len(nodes)} entities, {len(edges)} relationships")
+        return {"nodes": nodes, "edges": edges}
+    else:
+        st.error("❌ Could not create graph from data")
         return None
 
 def extract_json_from_text(text):
