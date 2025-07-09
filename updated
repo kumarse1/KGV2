@@ -196,18 +196,44 @@ Document: {text[:2000]}"""
 class GraphState(TypedDict):
     file: object
     text: str
+    structured_summary: str
     graph: dict
 
 def extract_step(state: GraphState):
     text = extract_text_from_file(state["file"])
-    st.write("**Extracted Text Length:**", len(text))  # Debug
+    st.write("**Extracted Text Length:**", len(text))
+    
+    # Better data structure analysis
     if text:
-        st.write("**Text Sample:**", text[:200])  # Debug
-    return {"text": text}
+        lines = text.split('\n')
+        if len(lines) > 1:
+            # Likely CSV/Excel data
+            headers = lines[0].split(',') if ',' in lines[0] else lines[0].split('\t')
+            st.write("**Detected Headers:**", headers)
+            
+            # Show sample data rows
+            sample_rows = []
+            for i in range(1, min(4, len(lines))):
+                if lines[i].strip():
+                    row_data = lines[i].split(',') if ',' in lines[i] else lines[i].split('\t')
+                    sample_rows.append(row_data)
+            
+            if sample_rows:
+                st.write("**Sample Data Rows:**")
+                for i, row in enumerate(sample_rows):
+                    st.write(f"Row {i+1}: {row}")
+            
+            # Create structured data summary for better LLM understanding
+            structured_summary = f"HEADERS: {headers}\n\nSAMPLE DATA:\n"
+            for i, row in enumerate(sample_rows):
+                structured_summary += f"Row {i+1}: {dict(zip(headers, row))}\n"
+            
+            return {"text": text, "structured_summary": structured_summary}
+    
+    return {"text": text, "structured_summary": ""}
 
 def extract_kg_step(state: GraphState):
-    graph = llm_extract_graph(state["text"])
-    return {"graph": graph}
+    return {"graph": llm_extract_graph(state["text"], state.get("structured_summary", ""))}
 
 def build_graph_pipeline():
     workflow = StateGraph(GraphState)
