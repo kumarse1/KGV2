@@ -580,9 +580,8 @@ def create_basic_fallback_from_data(data_summary):
 # 🎨 VISUALIZATION FUNCTIONS
 # =======================
 def create_pyvis_graph(graph_data):
-    """Create interactive pyvis visualization with centroid emphasis"""
+    """Create user-friendly, queryable knowledge graph with clean layout"""
     
-    # Validate data first
     if not graph_data or 'nodes' not in graph_data or 'edges' not in graph_data:
         st.error("❌ Invalid graph data structure")
         return None
@@ -594,38 +593,35 @@ def create_pyvis_graph(graph_data):
         st.error("❌ Need at least 2 nodes for visualization")
         return None
     
-    # Calculate node connectivity (centroids)
+    # Calculate connectivity for intelligent sizing
     node_connections = {}
     for edge in edges:
         source = edge['source']
-        target = edge['target']
+        target = edge['target'] 
         node_connections[source] = node_connections.get(source, 0) + 1
         node_connections[target] = node_connections.get(target, 0) + 1
     
-    # Find centroids (top 3 most connected)
-    centroids = sorted(node_connections.items(), key=lambda x: x[1], reverse=True)[:3]
-    centroid_nodes = set([c[0] for c in centroids])
-    
     try:
         net = Network(
-            height="600px", 
+            height="700px", 
             width="100%", 
             directed=True,
-            bgcolor="#f8f9fa"
+            bgcolor="#ffffff",
+            font_color="black"
         )
         
-        # Enhanced color scheme with centroid emphasis
+        # Clean, professional color scheme
         type_colors = {
-            'Application': '#FF6B6B',
-            'Database': '#4ECDC4', 
-            'Server': '#45B7D1',
-            'Person': '#FFA07A',
-            'Location': '#98D8C8',
-            'Technology': '#DDA0DD',
-            'Component': '#D3D3D3'
+            'Application': '#2E86AB',    # Professional blue
+            'Database': '#A23B72',       # Professional purple  
+            'Server': '#F18F01',         # Professional orange
+            'Person': '#C73E1D',         # Professional red
+            'Location': '#5E8B73',       # Professional green
+            'Technology': '#7209B7',     # Professional violet
+            'Component': '#6C757D'       # Professional gray
         }
         
-        # Add nodes with centroid-based sizing
+        # Add nodes with MODERATE sizing (no giant bubbles)
         valid_node_ids = set()
         for node in nodes:
             if isinstance(node, dict) and 'id' in node:
@@ -633,66 +629,50 @@ def create_pyvis_graph(graph_data):
                 node_type = str(node.get('type', 'Component'))
                 
                 if node_id and len(node_id) > 0:
-                    # Size based on connectivity (centroids are larger)
                     connections = node_connections.get(node_id, 0)
-                    if node_id in centroid_nodes:
-                        size = 40 + (connections * 5)  # Centroids are much larger
-                        border_width = 4
-                    else:
-                        size = 20 + (connections * 2)  # Regular nodes
-                        border_width = 2
                     
-                    color = type_colors.get(node_type, '#D3D3D3')
-                    
-                    # Special styling for centroids
-                    if node_id in centroid_nodes:
-                        # Add border to centroids
-                        net.add_node(
-                            node_id,
-                            label=f"⭐ {node_id[:15]}",  # Star for centroids
-                            color={'background': color, 'border': '#2E8B57', 'highlight': {'background': color, 'border': '#FF4500'}},
-                            size=size,
-                            title=f"🎯 CENTROID: {node_type} ({connections} connections)",
-                            borderWidth=border_width,
-                            font={'size': 14, 'color': 'black', 'face': 'arial'}
-                        )
+                    # MODERATE sizing - no giant nodes
+                    if connections > 3:
+                        size = 35  # Important nodes slightly larger
+                        font_size = 16
+                        label = f"{node_id}"
                     else:
-                        net.add_node(
-                            node_id,
-                            label=node_id[:15],
-                            color=color,
-                            size=size,
-                            title=f"Type: {node_type} ({connections} connections)",
-                            borderWidth=border_width
-                        )
+                        size = 25  # Standard size
+                        font_size = 14  
+                        label = node_id
+                    
+                    color = type_colors.get(node_type, '#6C757D')
+                    
+                    # Clean, readable styling
+                    net.add_node(
+                        node_id,
+                        label=label[:20],
+                        color={
+                            'background': color,
+                            'border': '#2C3E50',
+                            'highlight': {'background': color, 'border': '#E74C3C'}
+                        },
+                        size=size,
+                        title=f"{node_type}: {node_id}\nConnections: {connections}\nClick to explore relationships",
+                        borderWidth=2,
+                        font={'size': font_size, 'color': 'white', 'face': 'arial'},
+                        shadow={'enabled': True, 'color': 'rgba(0,0,0,0.3)', 'size': 5}
+                    )
                     valid_node_ids.add(node_id)
         
-        st.write(f"**✅ Added {len(valid_node_ids)} nodes ({len(centroid_nodes)} centroids)**")
-        
-        # Enhanced edge styling based on relationship type
-        edge_colors = {
-            'MANAGES': '#E74C3C',       # Red - Management
-            'USES': '#3498DB',          # Blue - Usage  
-            'RUNS_ON': '#2ECC71',       # Green - Technology
-            'HOSTED_ON': '#F39C12',     # Orange - Hosting
-            'LOCATED_IN': '#9B59B6',    # Purple - Location
-            'DEPENDS_ON': '#E67E22',    # Dark Orange - Dependencies
-            'SHARES_DATA': '#1ABC9C',   # Teal - Data sharing
-            'CONNECTS_TO': '#95A5A6'    # Gray - Generic
+        # Clean edge styling - focus on clarity
+        edge_styles = {
+            'MANAGES': {'color': '#E74C3C', 'width': 3, 'style': 'solid'},
+            'USES': {'color': '#3498DB', 'width': 2, 'style': 'solid'}, 
+            'RUNS_ON': {'color': '#2ECC71', 'width': 2, 'style': 'solid'},
+            'HOSTED_ON': {'color': '#F39C12', 'width': 2, 'style': 'solid'},
+            'LOCATED_IN': {'color': '#9B59B6', 'width': 1, 'style': 'dashed'},
+            'DEPENDS_ON': {'color': '#E67E22', 'width': 3, 'style': 'solid'},
+            'SHARES_DATA': {'color': '#1ABC9C', 'width': 2, 'style': 'dotted'},
+            'CONNECTS_TO': {'color': '#95A5A6', 'width': 1, 'style': 'solid'}
         }
         
-        edge_widths = {
-            'MANAGES': 4,      # Management is important
-            'DEPENDS_ON': 4,   # Dependencies are critical
-            'USES': 3,         # Usage relationships
-            'RUNS_ON': 3,      # Technology relationships
-            'HOSTED_ON': 2,    # Hosting
-            'SHARES_DATA': 2,  # Data sharing
-            'LOCATED_IN': 1,   # Location
-            'CONNECTS_TO': 1   # Generic
-        }
-        
-        # Add edges with enhanced styling
+        # Add edges with clear styling
         valid_edges = 0
         for edge in edges:
             if isinstance(edge, dict) and 'source' in edge and 'target' in edge:
@@ -701,40 +681,52 @@ def create_pyvis_graph(graph_data):
                 edge_type = str(edge.get('type', 'CONNECTS_TO'))
                 
                 if source in valid_node_ids and target in valid_node_ids and source != target:
-                    color = edge_colors.get(edge_type, '#95A5A6')
-                    width = edge_widths.get(edge_type, 2)
+                    style = edge_styles.get(edge_type, edge_styles['CONNECTS_TO'])
                     
                     net.add_edge(
                         source,
                         target,
                         label=edge_type,
-                        color=color,
-                        width=width,
-                        title=f"{source} {edge_type} {target}",
-                        arrows={'to': {'enabled': True, 'scaleFactor': 1.2}}
+                        color=style['color'],
+                        width=style['width'],
+                        title=f"{source} → {edge_type} → {target}",
+                        arrows={'to': {'enabled': True, 'scaleFactor': 1.0}},
+                        smooth={'enabled': True, 'type': 'continuous'}
                     )
                     valid_edges += 1
-                else:
-                    st.warning(f"⚠️ Skipping invalid edge: {source} → {target}")
         
-        st.write(f"**✅ Added {valid_edges} edges with enhanced styling**")
-        
-        # Physics settings for better centroid visibility
+        # Hierarchical layout - better organization
         net.set_options("""
         var options = {
           "physics": {
             "enabled": true,
-            "stabilization": {"iterations": 100},
-            "barnesHut": {
-              "gravitationalConstant": -2000,
-              "centralGravity": 0.3,
-              "springLength": 200,
-              "springConstant": 0.04,
+            "stabilization": {"iterations": 200},
+            "hierarchicalRepulsion": {
+              "centralGravity": 0.0,
+              "springLength": 150,
+              "springConstant": 0.01,
+              "nodeDistance": 120,
               "damping": 0.09
-            }
+            },
+            "solver": "hierarchicalRepulsion"
           },
           "layout": {
-            "improvedLayout": true
+            "hierarchical": {
+              "enabled": false,
+              "levelSeparation": 150,
+              "nodeSpacing": 200,
+              "treeSpacing": 200,
+              "blockShifting": true,
+              "edgeMinimization": true,
+              "parentCentralization": true,
+              "direction": "UD",
+              "sortMethod": "directed"
+            }
+          },
+          "interaction": {
+            "hover": true,
+            "selectConnectedEdges": true,
+            "hoverConnectedEdges": true
           }
         }
         """)
@@ -743,8 +735,163 @@ def create_pyvis_graph(graph_data):
         
     except Exception as e:
         st.error(f"❌ Pyvis error: {e}")
-        st.info("💡 Try restarting Streamlit or check pyvis installation")
         return None
+
+def create_graph_explorer_interface(graph_data):
+    """Create interactive exploration interface for the knowledge graph"""
+    
+    st.markdown("### 🔍 Knowledge Graph Explorer")
+    
+    # Entity selector
+    all_entities = [node['id'] for node in graph_data['nodes']]
+    entity_types = list(set([node['type'] for node in graph_data['nodes']]))
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**🎯 Explore by Entity:**")
+        selected_entity = st.selectbox(
+            "Select an entity to explore:",
+            ["All Entities"] + all_entities,
+            help="Choose an entity to see its relationships"
+        )
+        
+        if selected_entity != "All Entities":
+            # Show relationships for selected entity
+            st.markdown(f"**Relationships for: {selected_entity}**")
+            
+            incoming = []
+            outgoing = []
+            
+            for edge in graph_data['edges']:
+                if edge['target'] == selected_entity:
+                    incoming.append(f"← {edge['source']} ({edge['type']})")
+                elif edge['source'] == selected_entity:
+                    outgoing.append(f"→ {edge['target']} ({edge['type']})")
+            
+            if incoming:
+                st.write("**Incoming connections:**")
+                for rel in incoming:
+                    st.write(f"  {rel}")
+            
+            if outgoing:
+                st.write("**Outgoing connections:**")
+                for rel in outgoing:
+                    st.write(f"  {rel}")
+            
+            if not incoming and not outgoing:
+                st.write("*No direct relationships found*")
+    
+    with col2:
+        st.markdown("**🏷️ Explore by Type:**")
+        selected_type = st.selectbox(
+            "Select entity type:",
+            ["All Types"] + entity_types,
+            help="Filter entities by type"
+        )
+        
+        if selected_type != "All Types":
+            entities_of_type = [node['id'] for node in graph_data['nodes'] if node['type'] == selected_type]
+            st.write(f"**{selected_type} entities:**")
+            for entity in entities_of_type:
+                st.write(f"• {entity}")
+    
+    # Relationship explorer
+    st.markdown("**🔗 Relationship Explorer:**")
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        relationship_types = list(set([edge['type'] for edge in graph_data['edges']]))
+        selected_rel_type = st.selectbox(
+            "Explore by relationship type:",
+            ["All Relationships"] + relationship_types
+        )
+        
+        if selected_rel_type != "All Relationships":
+            matching_edges = [edge for edge in graph_data['edges'] if edge['type'] == selected_rel_type]
+            st.write(f"**{selected_rel_type} relationships:**")
+            for edge in matching_edges[:5]:  # Show first 5
+                st.write(f"• {edge['source']} → {edge['target']}")
+            if len(matching_edges) > 5:
+                st.write(f"... and {len(matching_edges) - 5} more")
+    
+    with col4:
+        # Quick insights
+        st.markdown("**📊 Quick Insights:**")
+        
+        # Most connected entity
+        connections = {}
+        for edge in graph_data['edges']:
+            connections[edge['source']] = connections.get(edge['source'], 0) + 1
+            connections[edge['target']] = connections.get(edge['target'], 0) + 1
+        
+        if connections:
+            most_connected = max(connections.items(), key=lambda x: x[1])
+            st.write(f"🎯 **Most connected:** {most_connected[0]} ({most_connected[1]} connections)")
+        
+        # Relationship distribution
+        rel_counts = {}
+        for edge in graph_data['edges']:
+            rel_type = edge['type']
+            rel_counts[rel_type] = rel_counts.get(rel_type, 0) + 1
+        
+        if rel_counts:
+            top_rel = max(rel_counts.items(), key=lambda x: x[1])
+            st.write(f"🔗 **Most common relationship:** {top_rel[0]} ({top_rel[1]} instances)")
+    
+    return selected_entity
+
+def create_chat_interface(graph_data):
+    """Simple chat interface for graph queries"""
+    
+    st.markdown("### 💬 Ask About Your Data")
+    
+    # Pre-built questions
+    st.markdown("**Quick Questions:**")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Who manages what systems?"):
+            st.session_state.auto_question = "management"
+        if st.button("What technologies are used?"):
+            st.session_state.auto_question = "technologies"
+    
+    with col2:
+        if st.button("What are the dependencies?"):
+            st.session_state.auto_question = "dependencies"
+        if st.button("Where are systems hosted?"):
+            st.session_state.auto_question = "hosting"
+    
+    # Answer pre-built questions
+    if hasattr(st.session_state, 'auto_question'):
+        question_type = st.session_state.auto_question
+        
+        if question_type == "management":
+            st.markdown("**👥 Management Relationships:**")
+            mgmt_edges = [e for e in graph_data['edges'] if e['type'] == 'MANAGES']
+            for edge in mgmt_edges:
+                st.write(f"• **{edge['source']}** manages **{edge['target']}**")
+        
+        elif question_type == "technologies":
+            st.markdown("**💻 Technology Usage:**")
+            tech_edges = [e for e in graph_data['edges'] if e['type'] in ['RUNS_ON', 'USES']]
+            for edge in tech_edges:
+                st.write(f"• **{edge['source']}** {edge['type'].lower()} **{edge['target']}**")
+        
+        elif question_type == "dependencies":
+            st.markdown("**🔗 System Dependencies:**")
+            dep_edges = [e for e in graph_data['edges'] if e['type'] == 'DEPENDS_ON']
+            for edge in dep_edges:
+                st.write(f"• **{edge['source']}** depends on **{edge['target']}**")
+        
+        elif question_type == "hosting":
+            st.markdown("**🏠 Hosting Relationships:**")
+            host_edges = [e for e in graph_data['edges'] if e['type'] == 'HOSTED_ON']
+            for edge in host_edges:
+                st.write(f"• **{edge['source']}** hosted on **{edge['target']}**")
+        
+        # Clear the question
+        del st.session_state.auto_question
 
 # =======================
 # 🖼️ MAIN APPLICATION
@@ -839,7 +986,7 @@ def main():
                     with open(temp_path, "r", encoding="utf-8") as f:
                         html_content = f.read()
                     
-                    components.html(html_content, height=650)
+                    components.html(html_content, height=720)
                     
                     # Cleanup
                     try:
@@ -853,7 +1000,16 @@ def main():
                 st.error(f"Visualization error: {e}")
                 st.info("💡 Make sure pyvis is installed: `pip install pyvis`")
             
+            # Add interactive exploration interface
+            st.markdown("---")
+            selected_entity = create_graph_explorer_interface(graph_data)
+            
+            # Add chat interface
+            st.markdown("---")
+            create_chat_interface(graph_data)
+            
             # Download option
+            st.markdown("---")
             st.markdown("### 💾 Export")
             st.download_button(
                 "📥 Download Graph JSON",
