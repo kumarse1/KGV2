@@ -190,30 +190,65 @@ def llm_extract_graph(text, structured_summary=""):
     if LLM_USERNAME == "your_username_here":
         return create_demo_graph()
     
-    # Enhanced prompt specifically for business systems data
-    prompt = f"""You are analyzing business systems data. Extract ALL actual system names, owners, and technologies from this data.
+    # Enhanced knowledge graph prompt with proper noun/verb structure
+    prompt = f"""You are a KNOWLEDGE GRAPH EXPERT creating a proper semantic network from business data.
 
+KNOWLEDGE GRAPH FUNDAMENTALS:
+- NOUNS (Entities) = People, Systems, Technologies, Locations, etc.
+- VERBS (Relationships) = Actions/connections between entities
+- GOAL = Reveal HIDDEN CONNECTIONS that aren't obvious from spreadsheet rows
+
+YOUR DATA:
 {structured_summary}
 
-CRITICAL INSTRUCTIONS:
-1. Use EXACT system names from the data (like "Risk Management System", "Customer Relationship Management")
-2. Use EXACT owner names (like "John Smith", "Jane Doe")
-3. Use EXACT technology names (like "Oracle", "MySQL", "Linux")
-4. Use EXACT locations (like "Windows", "SQ", "SQL Server")
-5. Create relationships based on data patterns:
-   - Owner MANAGES System
-   - System USES Technology
-   - System LOCATED_IN Location
-   - Systems with same owner/tech/location are RELATED
+KNOWLEDGE GRAPH CREATION INSTRUCTIONS:
 
-RETURN ONLY JSON with ACTUAL names from the data:
-{{"nodes": [{{"id": "EXACT_SYSTEM_NAME", "type": "Application"}}, {{"id": "EXACT_OWNER_NAME", "type": "Person"}}], "edges": [{{"source": "EXACT_OWNER", "target": "EXACT_SYSTEM", "type": "MANAGES"}}]}}
+1. IDENTIFY NOUNS (ENTITIES):
+   - Extract ALL system names (Risk Management System, Customer Portal, etc.)
+   - Extract ALL person names (John Smith, Jane Doe, etc.)
+   - Extract ALL technologies (Oracle, MySQL, Linux, Windows, etc.)
+   - Extract ALL locations/environments (DataCenter-A, Production, etc.)
 
-JSON:"""
+2. IDENTIFY VERBS (RELATIONSHIPS):
+   - MANAGES (Person manages System)
+   - USES (System uses Technology)
+   - DEPENDS_ON (System depends on another System)
+   - LOCATED_IN (System located in Location)
+   - SHARES_RESOURCE (Systems share same database/server)
+   - CONNECTS_TO (Systems communicate with each other)
+
+3. DISCOVER HIDDEN CONNECTIONS:
+   - If two systems have same owner → They're RELATED
+   - If two systems use same technology → They SHARE_TECHNOLOGY
+   - If systems are in same location → They SHARE_LOCATION
+   - If one system's data flows to another → They're CONNECTED
+
+4. KNOWLEDGE GRAPH REQUIREMENTS:
+   - Use EXACT names from the data (not generic names)
+   - Every entity should have 2+ connections
+   - Show indirect relationships (A→B, B→C means A depends on C)
+   - Reveal patterns that aren't obvious from individual rows
+
+EXAMPLE PROPER KNOWLEDGE GRAPH:
+{{"nodes": [
+    {{"id": "Risk Management System", "type": "Application"}},
+    {{"id": "John Smith", "type": "Person"}},
+    {{"id": "Oracle Database", "type": "Technology"}},
+    {{"id": "Customer Portal", "type": "Application"}},
+    {{"id": "DataCenter-A", "type": "Location"}}
+], "edges": [
+    {{"source": "John Smith", "target": "Risk Management System", "type": "MANAGES"}},
+    {{"source": "Risk Management System", "target": "Oracle Database", "type": "USES"}},
+    {{"source": "Customer Portal", "target": "Oracle Database", "type": "USES"}},
+    {{"source": "Risk Management System", "target": "Customer Portal", "type": "SHARES_RESOURCE"}},
+    {{"source": "Risk Management System", "target": "DataCenter-A", "type": "LOCATED_IN"}}
+]}}
+
+RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
     
     try:
         headers = {"Authorization": f"Basic {get_basic_auth()}", "Content-Type": "application/json"}
-        payload = {"inputs": prompt, "parameters": {"temperature": 0.05, "max_new_tokens": 1000}}
+        payload = {"inputs": prompt, "parameters": {"temperature": 0.05, "max_new_tokens": 1200}}
         
         response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=60)
         
@@ -227,29 +262,81 @@ JSON:"""
             else:
                 content = str(resp_json)
             
-            st.write("**🔍 LLM Processing Result:**")
+            st.write("**🧠 Knowledge Graph Generation Process:**")
             st.code(content[:800])
             
-            # Extract JSON
+            # Extract and validate knowledge graph
             extracted_json = extract_json_multiple_ways(content)
             
-            if extracted_json and len(extracted_json.get('nodes', [])) > 3:
-                st.success(f"✅ Extracted {len(extracted_json['nodes'])} nodes, {len(extracted_json['edges'])} edges")
+            if extracted_json and validate_knowledge_graph(extracted_json):
+                st.success(f"✅ **Knowledge Graph Created:** {len(extracted_json['nodes'])} entities, {len(extracted_json['edges'])} relationships")
+                
+                # Show what was discovered
+                st.write("**🔍 Discovered Entities:**")
+                entity_types = {}
+                for node in extracted_json['nodes']:
+                    entity_type = node.get('type', 'Unknown')
+                    if entity_type not in entity_types:
+                        entity_types[entity_type] = []
+                    entity_types[entity_type].append(node['id'])
+                
+                for etype, entities in entity_types.items():
+                    st.write(f"- **{etype}s:** {', '.join(entities[:3])}{'...' if len(entities) > 3 else ''}")
+                
+                st.write("**🔗 Hidden Connections Revealed:**")
+                relationship_types = {}
+                for edge in extracted_json['edges']:
+                    rel_type = edge.get('type', 'Unknown')
+                    if rel_type not in relationship_types:
+                        relationship_types[rel_type] = []
+                    relationship_types[rel_type].append(f"{edge['source']} → {edge['target']}")
+                
+                for rtype, relationships in relationship_types.items():
+                    st.write(f"- **{rtype}:** {len(relationships)} connections")
+                
                 return extracted_json
             else:
-                st.warning("⚠️ LLM didn't extract enough entities, creating from raw data")
+                st.warning("⚠️ LLM didn't create proper knowledge graph, using data-driven approach")
                 return create_rich_fallback_from_csv(structured_summary)
         else:
             st.error(f"LLM API error: {response.status_code}")
             return create_rich_fallback_from_csv(structured_summary)
             
     except Exception as e:
-        st.error(f"LLM call failed: {e}")
+        st.error(f"Knowledge graph creation failed: {e}")
         return create_rich_fallback_from_csv(structured_summary)
 
+def validate_knowledge_graph(graph_data):
+    """Validate that we have a proper knowledge graph structure"""
+    if not isinstance(graph_data, dict):
+        return False
+    
+    nodes = graph_data.get('nodes', [])
+    edges = graph_data.get('edges', [])
+    
+    # Check minimum requirements
+    if len(nodes) < 5 or len(edges) < 4:
+        return False
+    
+    # Check for proper noun/verb structure
+    node_ids = set(node['id'] for node in nodes)
+    valid_edges = 0
+    
+    for edge in edges:
+        source = edge.get('source', '')
+        target = edge.get('target', '')
+        rel_type = edge.get('type', '')
+        
+        # Validate relationship structure
+        if source in node_ids and target in node_ids and rel_type:
+            valid_edges += 1
+    
+    # Need at least 80% valid edges
+    return valid_edges >= len(edges) * 0.8
+
 def create_rich_fallback_from_csv(structured_summary):
-    """Create rich knowledge graph directly from CSV data"""
-    st.write("**🛠️ Creating knowledge graph from your actual data...**")
+    """Create proper knowledge graph directly from CSV using noun/verb principles"""
+    st.write("**🛠️ Creating proper knowledge graph from your data using semantic principles...**")
     
     nodes = []
     edges = []
@@ -262,123 +349,188 @@ def create_rich_fallback_from_csv(structured_summary):
         for line in lines:
             if line.startswith("Row") and ":" in line:
                 try:
-                    # Extract the row data
                     row_str = line.split(": ", 1)[1]
-                    row_data = eval(row_str)  # Convert string dict to actual dict
+                    row_data = eval(row_str)
                     data_rows.append(row_data)
                 except:
                     continue
         
-        st.write(f"**📊 Processing {len(data_rows)} data rows...**")
+        st.write(f"**📊 Applying Knowledge Graph Principles to {len(data_rows)} rows...**")
         
-        # Extract entities from actual data
-        systems = set()
-        owners = set()
-        technologies = set()
-        locations = set()
+        # STEP 1: IDENTIFY NOUNS (ENTITIES)
+        entities = {
+            'systems': set(),
+            'people': set(), 
+            'technologies': set(),
+            'locations': set(),
+            'functions': set()
+        }
         
+        # Entity extraction patterns
         for row in data_rows:
             for key, value in row.items():
                 if value and value.strip():
                     key_lower = key.lower()
+                    value_clean = value.strip()
                     
-                    # Identify system names
-                    if any(word in key_lower for word in ['system', 'application', 'service', 'management']):
-                        systems.add(value.strip())
+                    # Business Systems (Applications)
+                    if any(word in key_lower for word in ['system', 'application', 'service', 'management', 'portal', 'platform']):
+                        entities['systems'].add(value_clean)
                     
-                    # Identify owners
-                    elif any(word in key_lower for word in ['owner', 'responsible', 'manager']):
-                        owners.add(value.strip())
+                    # People (Person entities)
+                    elif any(word in key_lower for word in ['owner', 'responsible', 'manager', 'contact', 'admin']):
+                        entities['people'].add(value_clean)
                     
-                    # Identify technologies
-                    elif any(word in key_lower for word in ['technology', 'database', 'tech', 'platform']):
-                        if value.strip().lower() in ['oracle', 'mysql', 'linux', 'windows', 'sql server', 'java', 'python']:
-                            technologies.add(value.strip())
+                    # Technologies (Database, Software, etc.)
+                    elif any(word in key_lower for word in ['database', 'technology', 'tech', 'software', 'platform']):
+                        # Known technology patterns
+                        if any(tech in value_clean.lower() for tech in ['oracle', 'mysql', 'sql', 'linux', 'windows', 'java', 'python', 'apache']):
+                            entities['technologies'].add(value_clean)
                     
-                    # Identify locations
-                    elif any(word in key_lower for word in ['location', 'site', 'environment', 'datacenter']):
-                        locations.add(value.strip())
+                    # Locations (Physical/Logical locations)
+                    elif any(word in key_lower for word in ['location', 'site', 'datacenter', 'environment', 'server']):
+                        entities['locations'].add(value_clean)
+                    
+                    # Business Functions
+                    elif any(word in key_lower for word in ['function', 'service', 'process', 'business']):
+                        entities['functions'].add(value_clean)
         
-        # Create nodes
-        for system in list(systems)[:20]:  # Limit to prevent overwhelming
+        # STEP 2: CREATE ENTITY NODES
+        for system in list(entities['systems'])[:15]:  # Limit to prevent overwhelming
             nodes.append({"id": system, "type": "Application"})
         
-        for owner in list(owners)[:10]:
-            nodes.append({"id": owner, "type": "Person"})
+        for person in list(entities['people'])[:10]:
+            nodes.append({"id": person, "type": "Person"})
         
-        for tech in list(technologies)[:10]:
+        for tech in list(entities['technologies'])[:10]:
             nodes.append({"id": tech, "type": "Technology"})
         
-        for location in list(locations)[:10]:
+        for location in list(entities['locations'])[:8]:
             nodes.append({"id": location, "type": "Location"})
         
-        # Create relationships based on data patterns
+        for function in list(entities['functions'])[:5]:
+            nodes.append({"id": function, "type": "Business Service"})
+        
+        # STEP 3: IDENTIFY VERBS (RELATIONSHIPS) - Hidden Connections
+        st.write("**🔗 Discovering Hidden Connections...**")
+        
+        # Direct relationships from data patterns
         for row in data_rows:
-            row_system = None
-            row_owner = None
-            row_tech = None
-            row_location = None
+            row_entities = {}
             
-            # Find entities in this row
+            # Map entities found in this row
             for key, value in row.items():
                 if value and value.strip():
                     key_lower = key.lower()
+                    value_clean = value.strip()
                     
                     if any(word in key_lower for word in ['system', 'application', 'service', 'management']):
-                        row_system = value.strip()
+                        row_entities['system'] = value_clean
                     elif any(word in key_lower for word in ['owner', 'responsible', 'manager']):
-                        row_owner = value.strip()
-                    elif any(word in key_lower for word in ['technology', 'database', 'tech', 'platform']):
-                        if value.strip().lower() in ['oracle', 'mysql', 'linux', 'windows', 'sql server', 'java', 'python']:
-                            row_tech = value.strip()
-                    elif any(word in key_lower for word in ['location', 'site', 'environment', 'datacenter']):
-                        row_location = value.strip()
+                        row_entities['person'] = value_clean
+                    elif any(word in key_lower for word in ['database', 'technology', 'tech']):
+                        if any(tech in value_clean.lower() for tech in ['oracle', 'mysql', 'sql', 'linux', 'windows']):
+                            row_entities['technology'] = value_clean
+                    elif any(word in key_lower for word in ['location', 'site', 'datacenter', 'environment']):
+                        row_entities['location'] = value_clean
+                    elif any(word in key_lower for word in ['function', 'service', 'process']):
+                        row_entities['function'] = value_clean
             
-            # Create relationships
-            if row_owner and row_system:
-                edges.append({"source": row_owner, "target": row_system, "type": "MANAGES"})
+            # Create relationships (VERBS)
+            if 'person' in row_entities and 'system' in row_entities:
+                edges.append({
+                    "source": row_entities['person'],
+                    "target": row_entities['system'],
+                    "type": "MANAGES"
+                })
             
-            if row_system and row_tech:
-                edges.append({"source": row_system, "target": row_tech, "type": "USES"})
+            if 'system' in row_entities and 'technology' in row_entities:
+                edges.append({
+                    "source": row_entities['system'],
+                    "target": row_entities['technology'],
+                    "type": "USES"
+                })
             
-            if row_system and row_location:
-                edges.append({"source": row_system, "target": row_location, "type": "LOCATED_IN"})
+            if 'system' in row_entities and 'location' in row_entities:
+                edges.append({
+                    "source": row_entities['system'],
+                    "target": row_entities['location'],
+                    "type": "LOCATED_IN"
+                })
+            
+            if 'system' in row_entities and 'function' in row_entities:
+                edges.append({
+                    "source": row_entities['system'],
+                    "target": row_entities['function'],
+                    "type": "SUPPORTS"
+                })
         
-        # Add some interconnections for systems with same owner/tech
-        owner_systems = defaultdict(list)
-        tech_systems = defaultdict(list)
+        # STEP 4: DISCOVER HIDDEN CONNECTIONS
+        st.write("**🕵️ Finding Hidden Patterns...**")
+        
+        # Group systems by shared attributes (HIDDEN CONNECTIONS)
+        systems_by_owner = defaultdict(list)
+        systems_by_tech = defaultdict(list)
+        systems_by_location = defaultdict(list)
         
         for edge in edges:
             if edge['type'] == 'MANAGES':
-                owner_systems[edge['source']].append(edge['target'])
+                systems_by_owner[edge['source']].append(edge['target'])
             elif edge['type'] == 'USES':
-                tech_systems[edge['target']].append(edge['source'])
+                systems_by_tech[edge['target']].append(edge['source'])
+            elif edge['type'] == 'LOCATED_IN':
+                systems_by_location[edge['target']].append(edge['source'])
         
-        # Connect systems with same owner
-        for owner, systems in owner_systems.items():
-            for i in range(len(systems)):
-                for j in range(i+1, len(systems)):
-                    edges.append({
-                        "source": systems[i],
-                        "target": systems[j],
-                        "type": "SHARED_OWNER"
-                    })
+        # Connect systems with shared owners (HIDDEN: Co-managed systems)
+        for owner, systems in systems_by_owner.items():
+            if len(systems) > 1:
+                for i in range(len(systems)):
+                    for j in range(i+1, len(systems)):
+                        edges.append({
+                            "source": systems[i],
+                            "target": systems[j],
+                            "type": "SHARES_OWNER"
+                        })
         
-        # Connect systems using same technology
-        for tech, systems in tech_systems.items():
-            for i in range(len(systems)):
-                for j in range(i+1, len(systems)):
-                    edges.append({
-                        "source": systems[i],
-                        "target": systems[j],
-                        "type": "SHARED_TECHNOLOGY"
-                    })
+        # Connect systems using same technology (HIDDEN: Technology dependencies)
+        for tech, systems in systems_by_tech.items():
+            if len(systems) > 1:
+                for i in range(len(systems)):
+                    for j in range(i+1, len(systems)):
+                        edges.append({
+                            "source": systems[i],
+                            "target": systems[j],
+                            "type": "SHARES_TECHNOLOGY"
+                        })
         
-        st.success(f"✅ Created graph with {len(nodes)} nodes and {len(edges)} edges from your actual data!")
+        # Connect systems in same location (HIDDEN: Physical dependencies)
+        for location, systems in systems_by_location.items():
+            if len(systems) > 1:
+                for i in range(len(systems)):
+                    for j in range(i+1, len(systems)):
+                        edges.append({
+                            "source": systems[i],
+                            "target": systems[j],
+                            "type": "CO_LOCATED"
+                        })
+        
+        # STEP 5: VALIDATE KNOWLEDGE GRAPH
+        hidden_connections = len([e for e in edges if e['type'] in ['SHARES_OWNER', 'SHARES_TECHNOLOGY', 'CO_LOCATED']])
+        
+        st.success(f"✅ **Knowledge Graph Created:**")
+        st.write(f"- **{len(nodes)} Entities** (nouns) extracted from your data")
+        st.write(f"- **{len(edges)} Relationships** (verbs) discovered")
+        st.write(f"- **{hidden_connections} Hidden Connections** revealed")
+        
+        # Show the power of knowledge graph
+        st.write("**🎯 Knowledge Graph Power Demonstrated:**")
+        st.write(f"- **Direct relationships:** {len(edges) - hidden_connections} (obvious from data)")
+        st.write(f"- **Hidden connections:** {hidden_connections} (NOT obvious from spreadsheet)")
+        st.write(f"- **Semantic structure:** Proper nouns (entities) and verbs (relationships)")
+        
         return {"nodes": nodes, "edges": edges}
     
     else:
-        # Fallback to demo data
         st.warning("⚠️ Could not parse structured data, using demo graph")
         return create_demo_graph()
 
