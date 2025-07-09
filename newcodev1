@@ -62,9 +62,9 @@ def extract_data_from_excel(file):
 # 🤖 LLM KNOWLEDGE GRAPH EXTRACTION
 # =======================
 def create_knowledge_graph_with_llm(data_summary):
-    """Use LLM to extract knowledge graph"""
+    """Use LLM to extract knowledge graph - Strong prompt with Llama optimization"""
     
-    # Enhanced prompt from your original code
+    # Strong, detailed prompt (your original - it's excellent!)
     prompt = f"""You are a KNOWLEDGE GRAPH EXPERT creating a proper semantic network from business data.
 
 KNOWLEDGE GRAPH FUNDAMENTALS:
@@ -120,7 +120,7 @@ EXAMPLE PROPER KNOWLEDGE GRAPH:
 
 RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
 
-    # Call LLM API
+    # Call LLM API with Llama-optimized handling
     try:
         headers = {
             "Authorization": f"Basic {get_basic_auth()}", 
@@ -129,39 +129,52 @@ RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
         payload = {
             "inputs": prompt, 
             "parameters": {
-                "temperature": 0.05, 
-                "max_new_tokens": 1200
+                "temperature": 0.1,  # Low temperature for structured output
+                "max_new_tokens": 1200,  # Enough for complex graphs
+                "stop": ["\n\nNote:", "\n\nExplanation:", "Here's"]  # Stop tokens
             }
         }
         
-        with st.spinner("🧠 LLM is analyzing your data and creating knowledge graph..."):
+        with st.spinner("🧠 LLM is analyzing data with advanced knowledge graph techniques..."):
             response = requests.post(LLM_API_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             resp_json = response.json()
             
-            # Extract response text
-            if "generated_text" in resp_json:
+            # Handle different Llama response formats
+            content = ""
+            if isinstance(resp_json, list) and len(resp_json) > 0:
+                if "generated_text" in resp_json[0]:
+                    content = resp_json[0]["generated_text"]
+                else:
+                    content = str(resp_json[0])
+            elif "generated_text" in resp_json:
                 content = resp_json["generated_text"]
-            elif isinstance(resp_json, list):
-                content = resp_json[0].get("generated_text", str(resp_json))
+            elif "output" in resp_json:
+                content = resp_json["output"]
             else:
                 content = str(resp_json)
             
-            st.write("**🤖 LLM Response:**")
-            st.code(content[:500] + "..." if len(content) > 500 else content)
+            # Remove the original prompt from response (Llama often echoes it)
+            if "RETURN ONLY THE KNOWLEDGE GRAPH JSON" in content:
+                content = content.split("RETURN ONLY THE KNOWLEDGE GRAPH JSON")[-1].strip()
+            if "NO EXPLANATIONS:" in content:
+                content = content.split("NO EXPLANATIONS:")[-1].strip()
+            
+            st.write("**🤖 LLM Response (after prompt removal):**")
+            st.code(content[:400] + "..." if len(content) > 400 else content)
             
             # Extract JSON from response
             graph_data = extract_json_from_text(content)
             
             if graph_data and validate_graph(graph_data):
-                st.success(f"✅ Knowledge Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
+                st.success(f"✅ Advanced Knowledge Graph Created: {len(graph_data['nodes'])} entities, {len(graph_data['edges'])} relationships")
                 return graph_data
             else:
                 st.error("⚠️ Could not extract valid graph from LLM response")
                 return None
         else:
-            st.error(f"LLM API Error: {response.status_code}")
+            st.error(f"LLM API Error: {response.status_code} - {response.text}")
             return None
             
     except Exception as e:
@@ -169,29 +182,84 @@ RETURN ONLY THE KNOWLEDGE GRAPH JSON - NO EXPLANATIONS:"""
         return None
 
 def extract_json_from_text(text):
-    """Extract JSON from LLM response"""
-    # Try multiple patterns to find JSON
-    json_patterns = [
-        r'```json\s*(\{.*?\})\s*```',
-        r'```\s*(\{.*?\})\s*```',
-        r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})',
-        r'(\{.*?"nodes".*?"edges".*?\})'
+    """Extract JSON from LLM response - improved extraction"""
+    
+    # First, let's see what we got
+    st.write("**🔍 Raw LLM Response:**")
+    st.text_area("Full Response", text, height=200)
+    
+    # Try multiple extraction methods
+    methods = [
+        # Method 1: Look for JSON blocks
+        lambda t: re.search(r'```json\s*(\{.*?\})\s*```', t, re.DOTALL),
+        lambda t: re.search(r'```\s*(\{.*?\})\s*```', t, re.DOTALL),
+        
+        # Method 2: Look for any JSON with nodes/edges
+        lambda t: re.search(r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})', t, re.DOTALL),
+        lambda t: re.search(r'(\{.*?"nodes".*?"edges".*?\})', t, re.DOTALL),
+        
+        # Method 3: Find JSON anywhere in text
+        lambda t: re.search(r'(\{.*\})', t, re.DOTALL)
     ]
     
-    for pattern in json_patterns:
-        matches = re.findall(pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                # Clean up the JSON string
-                cleaned = match.strip()
-                cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)  # Remove trailing commas
+    for i, method in enumerate(methods):
+        try:
+            match = method(text)
+            if match:
+                json_str = match.group(1)
+                st.write(f"**Method {i+1} found JSON:**")
+                st.code(json_str[:500] + "..." if len(json_str) > 500 else json_str)
                 
-                result = json.loads(cleaned)
-                if validate_graph(result):
-                    return result
-            except:
-                continue
+                # Try to parse it
+                try:
+                    # Clean up common issues
+                    cleaned = json_str.strip()
+                    # Remove trailing commas
+                    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
+                    # Fix single quotes to double quotes
+                    cleaned = re.sub(r"'([^']*)':", r'"\1":', cleaned)
+                    
+                    result = json.loads(cleaned)
+                    
+                    if validate_graph(result):
+                        st.success(f"✅ Valid graph found with method {i+1}")
+                        return result
+                    else:
+                        st.warning(f"⚠️ Method {i+1}: JSON found but not valid graph structure")
+                        
+                except json.JSONDecodeError as e:
+                    st.warning(f"⚠️ Method {i+1}: JSON parse error - {e}")
+                    continue
+                    
+        except Exception as e:
+            continue
     
+    # If all methods fail, try to manually construct from text
+    st.write("**🛠️ Attempting manual extraction...**")
+    
+    # Look for node and edge patterns in text
+    node_pattern = r'"id":\s*"([^"]+)".*?"type":\s*"([^"]+)"'
+    edge_pattern = r'"source":\s*"([^"]+)".*?"target":\s*"([^"]+)".*?"type":\s*"([^"]+)"'
+    
+    nodes = []
+    edges = []
+    
+    # Extract nodes
+    node_matches = re.findall(node_pattern, text)
+    for node_id, node_type in node_matches:
+        nodes.append({"id": node_id, "type": node_type})
+    
+    # Extract edges  
+    edge_matches = re.findall(edge_pattern, text)
+    for source, target, edge_type in edge_matches:
+        edges.append({"source": source, "target": target, "type": edge_type})
+    
+    if nodes and edges:
+        manual_graph = {"nodes": nodes, "edges": edges}
+        st.success(f"✅ Manual extraction found {len(nodes)} nodes, {len(edges)} edges")
+        return manual_graph
+    
+    st.error("❌ Could not extract any valid graph structure")
     return None
 
 def validate_graph(graph_data):
