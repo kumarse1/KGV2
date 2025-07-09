@@ -169,16 +169,14 @@ def extract_json_from_text(text):
     return extract_entities_from_text(text)
 
 def extract_entities_from_text(text):
-    """Extract entities directly from text without JSON parsing"""
+    """Extract entities with proper centroids and meaningful relationships"""
     
-    # Find all quoted strings (most reliable)
+    # Find all quoted strings and capitalized words
     quoted_entities = re.findall(r'"([^"]{2,30})"', text)
     quoted_entities += re.findall(r"'([^']{2,30})'", text)
-    
-    # Find capitalized words (likely entities)
     capitalized_words = re.findall(r'\b[A-Z][a-zA-Z\s]{2,25}\b', text)
     
-    # Combine all potential entities
+    # Combine and clean entities
     all_entities = list(set(quoted_entities + capitalized_words))
     
     st.write(f"**Found {len(all_entities)} potential entities:**")
@@ -186,59 +184,157 @@ def extract_entities_from_text(text):
         st.write(f"- {entity}")
     
     if len(all_entities) < 3:
-        st.warning("Not enough entities found, creating basic demo")
         return create_minimal_demo_graph()
     
-    # Create nodes from entities
+    # SMART ENTITY CLASSIFICATION with centroids
     nodes = []
-    for i, entity in enumerate(all_entities[:8]):  # Limit to 8 nodes
+    systems = []
+    people = []
+    technologies = []
+    databases = []
+    servers = []
+    locations = []
+    
+    for entity in all_entities[:12]:  # More entities for better centroids
         entity = entity.strip()
+        entity_lower = entity.lower()
         
-        # Determine type based on keywords
-        if any(word in entity.lower() for word in ['system', 'app', 'portal', 'management']):
+        # Classify entities more precisely
+        if any(word in entity_lower for word in ['system', 'app', 'application', 'portal', 'platform', 'management', 'service']):
             node_type = "Application"
-        elif any(word in entity.lower() for word in ['database', 'db', 'data']):
-            node_type = "Database"
-        elif any(word in entity.lower() for word in ['server', 'host', 'machine']):
+            systems.append(entity)
+        elif any(word in entity_lower for word in ['database', 'db', 'data', 'warehouse']):
+            node_type = "Database" 
+            databases.append(entity)
+        elif any(word in entity_lower for word in ['server', 'host', 'machine', 'vm', 'infrastructure']):
             node_type = "Server"
-        elif any(word in entity.lower() for word in ['windows', 'linux', 'oracle', 'mysql']):
+            servers.append(entity)
+        elif any(word in entity_lower for word in ['windows', 'linux', 'oracle', 'mysql', 'java', 'python', 'apache']):
             node_type = "Technology"
-        elif len(entity.split()) == 2 and entity.istitle():
-            node_type = "Person"  # Likely a person name
+            technologies.append(entity)
+        elif any(word in entity_lower for word in ['datacenter', 'center', 'site', 'location', 'office', 'cloud']):
+            node_type = "Location"
+            locations.append(entity)
+        elif len(entity.split()) == 2 and entity.istitle() and not any(tech in entity_lower for tech in ['system', 'server', 'database']):
+            node_type = "Person"
+            people.append(entity)
         else:
             node_type = "Component"
+            systems.append(entity)  # Default unknown to systems
         
         nodes.append({"id": entity, "type": node_type})
     
-    # Create simple connecting edges
+    st.write("**Entity Classification:**")
+    st.write(f"- Applications: {len(systems)} - {systems[:3]}")
+    st.write(f"- People: {len(people)} - {people[:3]}")
+    st.write(f"- Technologies: {len(technologies)} - {technologies[:3]}")
+    st.write(f"- Databases: {len(databases)} - {databases[:3]}")
+    st.write(f"- Servers: {len(servers)} - {servers[:3]}")
+    st.write(f"- Locations: {len(locations)} - {locations[:3]}")
+    
+    # CREATE MEANINGFUL RELATIONSHIPS with centroids
     edges = []
-    for i in range(len(nodes) - 1):
-        edges.append({
-            "source": nodes[i]['id'],
-            "target": nodes[i + 1]['id'],
-            "type": "CONNECTS_TO"
-        })
     
-    # Add some management relationships
-    people = [n for n in nodes if n['type'] == 'Person']
-    systems = [n for n in nodes if n['type'] in ['Application', 'Database', 'Server']]
-    
-    for person in people[:2]:  # First 2 people
-        for system in systems[:2]:  # First 2 systems
+    # 1. MANAGEMENT RELATIONSHIPS (People → Systems)
+    for person in people:
+        for system in systems[:2]:  # Each person manages 1-2 systems
             edges.append({
-                "source": person['id'],
-                "target": system['id'],
+                "source": person,
+                "target": system,
                 "type": "MANAGES"
             })
     
+    # 2. USAGE RELATIONSHIPS (Systems → Databases/Technologies)
+    for system in systems:
+        # Systems use databases
+        for db in databases[:1]:  # Each system uses 1 database
+            edges.append({
+                "source": system,
+                "target": db,
+                "type": "USES"
+            })
+        # Systems use technologies
+        for tech in technologies[:1]:  # Each system uses 1 technology
+            edges.append({
+                "source": system,
+                "target": tech,
+                "type": "RUNS_ON"
+            })
+    
+    # 3. HOSTING RELATIONSHIPS (Systems/Databases → Servers)
+    for server in servers:
+        # Systems run on servers
+        for system in systems[:2]:  # Each server hosts 2 systems
+            edges.append({
+                "source": system,
+                "target": server,
+                "type": "HOSTED_ON"
+            })
+        # Databases run on servers
+        for db in databases[:1]:  # Each server hosts 1 database
+            edges.append({
+                "source": db,
+                "target": server,
+                "type": "HOSTED_ON"
+            })
+    
+    # 4. LOCATION RELATIONSHIPS (Servers → Locations)
+    for server in servers:
+        for location in locations[:1]:  # Each server is in 1 location
+            edges.append({
+                "source": server,
+                "target": location,
+                "type": "LOCATED_IN"
+            })
+    
+    # 5. DEPENDENCY RELATIONSHIPS (System → System)
+    if len(systems) > 1:
+        for i in range(len(systems) - 1):
+            edges.append({
+                "source": systems[i],
+                "target": systems[i + 1],
+                "type": "DEPENDS_ON"
+            })
+    
+    # 6. SHARED RESOURCE RELATIONSHIPS
+    if len(systems) > 1 and databases:
+        # Multiple systems sharing same database
+        main_db = databases[0]
+        for system in systems[1:]:  # All systems except first
+            edges.append({
+                "source": system,
+                "target": main_db,
+                "type": "SHARES_DATA"
+            })
+    
+    # IDENTIFY CENTROIDS (most connected entities)
+    node_connections = {}
+    for edge in edges:
+        source = edge['source']
+        target = edge['target']
+        node_connections[source] = node_connections.get(source, 0) + 1
+        node_connections[target] = node_connections.get(target, 0) + 1
+    
+    # Find top centroids
+    centroids = sorted(node_connections.items(), key=lambda x: x[1], reverse=True)[:3]
+    
+    st.write("**🎯 Identified Centroids (Most Connected):**")
+    for centroid, connections in centroids:
+        st.write(f"- **{centroid}**: {connections} connections")
+    
     result = {"nodes": nodes, "edges": edges}
     
-    st.success(f"✅ Created graph: {len(nodes)} entities, {len(edges)} relationships")
+    st.success(f"✅ Created sophisticated graph: {len(nodes)} entities, {len(edges)} relationships")
     
-    # Show what was created
-    st.write("**Created Entities:**")
-    for node in nodes[:5]:
-        st.write(f"- {node['id']} ({node['type']})")
+    # Show relationship breakdown
+    rel_types = {}
+    for edge in edges:
+        rel_type = edge['type']
+        rel_types[rel_type] = rel_types.get(rel_type, 0) + 1
+    
+    st.write("**🔗 Relationship Types Created:**")
+    for rtype, count in rel_types.items():
+        st.write(f"- **{rtype}**: {count} connections")
     
     return result
 
@@ -484,7 +580,7 @@ def create_basic_fallback_from_data(data_summary):
 # 🎨 VISUALIZATION FUNCTIONS
 # =======================
 def create_pyvis_graph(graph_data):
-    """Create interactive pyvis visualization with extra safety"""
+    """Create interactive pyvis visualization with centroid emphasis"""
     
     # Validate data first
     if not graph_data or 'nodes' not in graph_data or 'edges' not in graph_data:
@@ -498,6 +594,18 @@ def create_pyvis_graph(graph_data):
         st.error("❌ Need at least 2 nodes for visualization")
         return None
     
+    # Calculate node connectivity (centroids)
+    node_connections = {}
+    for edge in edges:
+        source = edge['source']
+        target = edge['target']
+        node_connections[source] = node_connections.get(source, 0) + 1
+        node_connections[target] = node_connections.get(target, 0) + 1
+    
+    # Find centroids (top 3 most connected)
+    centroids = sorted(node_connections.items(), key=lambda x: x[1], reverse=True)[:3]
+    centroid_nodes = set([c[0] for c in centroids])
+    
     try:
         net = Network(
             height="600px", 
@@ -506,7 +614,7 @@ def create_pyvis_graph(graph_data):
             bgcolor="#f8f9fa"
         )
         
-        # Color scheme
+        # Enhanced color scheme with centroid emphasis
         type_colors = {
             'Application': '#FF6B6B',
             'Database': '#4ECDC4', 
@@ -517,7 +625,7 @@ def create_pyvis_graph(graph_data):
             'Component': '#D3D3D3'
         }
         
-        # Add nodes with validation
+        # Add nodes with centroid-based sizing
         valid_node_ids = set()
         for node in nodes:
             if isinstance(node, dict) and 'id' in node:
@@ -525,20 +633,66 @@ def create_pyvis_graph(graph_data):
                 node_type = str(node.get('type', 'Component'))
                 
                 if node_id and len(node_id) > 0:
+                    # Size based on connectivity (centroids are larger)
+                    connections = node_connections.get(node_id, 0)
+                    if node_id in centroid_nodes:
+                        size = 40 + (connections * 5)  # Centroids are much larger
+                        border_width = 4
+                    else:
+                        size = 20 + (connections * 2)  # Regular nodes
+                        border_width = 2
+                    
                     color = type_colors.get(node_type, '#D3D3D3')
                     
-                    net.add_node(
-                        node_id,
-                        label=node_id[:20],  # Limit label length
-                        color=color,
-                        title=f"Type: {node_type}",
-                        size=20
-                    )
+                    # Special styling for centroids
+                    if node_id in centroid_nodes:
+                        # Add border to centroids
+                        net.add_node(
+                            node_id,
+                            label=f"⭐ {node_id[:15]}",  # Star for centroids
+                            color={'background': color, 'border': '#2E8B57', 'highlight': {'background': color, 'border': '#FF4500'}},
+                            size=size,
+                            title=f"🎯 CENTROID: {node_type} ({connections} connections)",
+                            borderWidth=border_width,
+                            font={'size': 14, 'color': 'black', 'face': 'arial'}
+                        )
+                    else:
+                        net.add_node(
+                            node_id,
+                            label=node_id[:15],
+                            color=color,
+                            size=size,
+                            title=f"Type: {node_type} ({connections} connections)",
+                            borderWidth=border_width
+                        )
                     valid_node_ids.add(node_id)
         
-        st.write(f"**✅ Added {len(valid_node_ids)} nodes to visualization**")
+        st.write(f"**✅ Added {len(valid_node_ids)} nodes ({len(centroid_nodes)} centroids)**")
         
-        # Add edges with strict validation
+        # Enhanced edge styling based on relationship type
+        edge_colors = {
+            'MANAGES': '#E74C3C',       # Red - Management
+            'USES': '#3498DB',          # Blue - Usage  
+            'RUNS_ON': '#2ECC71',       # Green - Technology
+            'HOSTED_ON': '#F39C12',     # Orange - Hosting
+            'LOCATED_IN': '#9B59B6',    # Purple - Location
+            'DEPENDS_ON': '#E67E22',    # Dark Orange - Dependencies
+            'SHARES_DATA': '#1ABC9C',   # Teal - Data sharing
+            'CONNECTS_TO': '#95A5A6'    # Gray - Generic
+        }
+        
+        edge_widths = {
+            'MANAGES': 4,      # Management is important
+            'DEPENDS_ON': 4,   # Dependencies are critical
+            'USES': 3,         # Usage relationships
+            'RUNS_ON': 3,      # Technology relationships
+            'HOSTED_ON': 2,    # Hosting
+            'SHARES_DATA': 2,  # Data sharing
+            'LOCATED_IN': 1,   # Location
+            'CONNECTS_TO': 1   # Generic
+        }
+        
+        # Add edges with enhanced styling
         valid_edges = 0
         for edge in edges:
             if isinstance(edge, dict) and 'source' in edge and 'target' in edge:
@@ -547,29 +701,41 @@ def create_pyvis_graph(graph_data):
                 edge_type = str(edge.get('type', 'CONNECTS_TO'))
                 
                 if source in valid_node_ids and target in valid_node_ids and source != target:
+                    color = edge_colors.get(edge_type, '#95A5A6')
+                    width = edge_widths.get(edge_type, 2)
+                    
                     net.add_edge(
                         source,
                         target,
-                        label=edge_type[:15],  # Limit label length
-                        title=f"{source} {edge_type} {target}"
+                        label=edge_type,
+                        color=color,
+                        width=width,
+                        title=f"{source} {edge_type} {target}",
+                        arrows={'to': {'enabled': True, 'scaleFactor': 1.2}}
                     )
                     valid_edges += 1
                 else:
                     st.warning(f"⚠️ Skipping invalid edge: {source} → {target}")
         
-        st.write(f"**✅ Added {valid_edges} edges to visualization**")
+        st.write(f"**✅ Added {valid_edges} edges with enhanced styling**")
         
-        if valid_edges == 0:
-            st.warning("⚠️ No valid edges found, adding basic connections")
-            # Add basic connections between consecutive nodes
-            node_list = list(valid_node_ids)
-            for i in range(len(node_list) - 1):
-                net.add_edge(node_list[i], node_list[i + 1], label="CONNECTS_TO")
-        
-        # Simple physics
+        # Physics settings for better centroid visibility
         net.set_options("""
         var options = {
-          "physics": {"enabled": true, "stabilization": {"iterations": 50}}
+          "physics": {
+            "enabled": true,
+            "stabilization": {"iterations": 100},
+            "barnesHut": {
+              "gravitationalConstant": -2000,
+              "centralGravity": 0.3,
+              "springLength": 200,
+              "springConstant": 0.04,
+              "damping": 0.09
+            }
+          },
+          "layout": {
+            "improvedLayout": true
+          }
         }
         """)
         
