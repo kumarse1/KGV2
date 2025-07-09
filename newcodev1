@@ -357,85 +357,225 @@ def create_basic_fallback_from_data(data_summary):
         return None
 
 def extract_json_from_text(text):
-    """Extract JSON from LLM response - improved extraction"""
+    """Extract JSON from LLM response - robust JSON fixing"""
     
-    # First, let's see what we got
-    st.write("**🔍 Raw LLM Response:**")
-    st.text_area("Full Response", text, height=200)
+    st.write("**🔍 Raw LLM Response for debugging:**")
+    st.text_area("Full Response", text, height=150)
     
-    # Try multiple extraction methods
-    methods = [
-        # Method 1: Look for JSON blocks
-        lambda t: re.search(r'```json\s*(\{.*?\})\s*```', t, re.DOTALL),
-        lambda t: re.search(r'```\s*(\{.*?\})\s*```', t, re.DOTALL),
-        
-        # Method 2: Look for any JSON with nodes/edges
-        lambda t: re.search(r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})', t, re.DOTALL),
-        lambda t: re.search(r'(\{.*?"nodes".*?"edges".*?\})', t, re.DOTALL),
-        
-        # Method 3: Find JSON anywhere in text
-        lambda t: re.search(r'(\{.*\})', t, re.DOTALL)
+    # First try: Look for complete JSON blocks
+    json_patterns = [
+        r'```json\s*(\{.*?\})\s*```',
+        r'```\s*(\{.*?\})\s*```',
+        r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})',
+        r'(\{.*?"nodes".*?"edges".*?\})'
     ]
     
-    for i, method in enumerate(methods):
+    for i, pattern in enumerate(json_patterns, 1):
         try:
-            match = method(text)
-            if match:
-                json_str = match.group(1)
-                st.write(f"**Method {i+1} found JSON:**")
-                st.code(json_str[:500] + "..." if len(json_str) > 500 else json_str)
+            matches = re.findall(pattern, text, re.DOTALL)
+            for match in matches:
+                st.write(f"**Method {i} found JSON:**")
+                st.code(match[:300] + "..." if len(match) > 300 else match)
                 
-                # Try to parse it
-                try:
-                    # Clean up common issues
-                    cleaned = json_str.strip()
-                    # Remove trailing commas
-                    cleaned = re.sub(r',(\s*[}\]])', r'\1', cleaned)
-                    # Fix single quotes to double quotes
-                    cleaned = re.sub(r"'([^']*)':", r'"\1":', cleaned)
-                    
-                    result = json.loads(cleaned)
-                    
-                    if validate_graph(result):
-                        st.success(f"✅ Valid graph found with method {i+1}")
-                        return result
-                    else:
-                        st.warning(f"⚠️ Method {i+1}: JSON found but not valid graph structure")
-                        
-                except json.JSONDecodeError as e:
-                    st.warning(f"⚠️ Method {i+1}: JSON parse error - {e}")
-                    continue
+                # Try parsing with aggressive cleanup
+                fixed_json = fix_json_syntax(match)
+                if fixed_json:
+                    st.success(f"✅ Method {i} succeeded after JSON fixing")
+                    return fixed_json
                     
         except Exception as e:
+            st.warning(f"Method {i} failed: {e}")
             continue
     
-    # If all methods fail, try to manually construct from text
-    st.write("**🛠️ Attempting manual extraction...**")
-    
-    # Look for node and edge patterns in text
-    node_pattern = r'"id":\s*"([^"]+)".*?"type":\s*"([^"]+)"'
-    edge_pattern = r'"source":\s*"([^"]+)".*?"target":\s*"([^"]+)".*?"type":\s*"([^"]+)"'
+    # Manual extraction as backup
+    st.write("**🛠️ Attempting manual pattern extraction...**")
+    return manual_extract_graph(text)
+
+def fix_json_syntax(json_str):
+    """Aggressively fix common JSON syntax errors"""
+    try:
+        # Start with the original
+        fixed = json_str.strip()
+        
+        # Common fixes
+        fixes_applied = []
+        
+        # 1. Remove trailing commas
+        original_fixed = fixed
+        fixed = re.sub(r',(\s*[}\]])', r'\1', fixed)
+        if fixed != original_fixed:
+            fixes_applied.append("Removed trailing commas")
+        
+        # 2. Fix single quotes to double quotes
+        original_fixed = fixed
+        fixed = re.sub(r"'([^']*)':", r'"\1":', fixed)
+        fixed = re.sub(r":\s*'([^']*)'", r': "\1"', fixed)
+        if fixed != original_fixed:
+            fixes_applied.append("Fixed single quotes")
+        
+        # 3. Fix missing quotes on keys
+        original_fixed = fixed
+        fixed = re.sub(r'(\w+):', r'"\1":', fixed)
+        if fixed != original_fixed:
+            fixes_applied.append("Added quotes to keys")
+        
+        # 4. Fix missing quotes on string values (but not numbers/booleans)
+        original_fixed = fixed
+        fixed = re.sub(r':\s*([a-zA-Z][a-zA-Z0-9\s_-]*)\s*([,}\]])', r': "\1"\2', fixed)
+        if fixed != original_fixed:
+            fixes_applied.append("Added quotes to string values")
+        
+        # 5. Fix double quotes inside strings
+        original_fixed = fixed
+        fixed = re.sub(r'"\s*([^"]*)"([^"]*)"([^"]*)\s*"', r'"\1\2\3"', fixed)
+        if fixed != original_fixed:
+            fixes_applied.append("Fixed nested quotes")
+        
+        # 6. Ensure proper structure
+        if not fixed.startswith('{'):
+            fixed = '{' + fixed
+        if not fixed.endswith('}'):
+            fixed = fixed + '}'
+        
+        st.write(f"**JSON fixes applied:** {', '.join(fixes_applied) if fixes_applied else 'None needed'}")
+        st.code(f"Fixed JSON:\n{fixed[:200]}...")
+        
+        # Try to parse
+        result = json.loads(fixed)
+        
+        if validate_graph(result):
+            return result
+        else:
+            st.warning("Fixed JSON parses but doesn't have valid graph structure")
+            return None
+            
+    except json.JSONDecodeError as e:
+        st.warning(f"JSON still invalid after fixes: {e}")
+        return None
+    except Exception as e:
+        st.warning(f"Error during JSON fixing: {e}")
+        return None
+
+def manual_extract_graph(text):
+    """Extract nodes and edges using regex patterns when JSON parsing fails"""
+    st.write("**🔧 Manual extraction from text patterns...**")
     
     nodes = []
     edges = []
     
-    # Extract nodes
-    node_matches = re.findall(node_pattern, text)
-    for node_id, node_type in node_matches:
-        nodes.append({"id": node_id, "type": node_type})
+    # Pattern 1: Look for node-like patterns
+    node_patterns = [
+        r'"id":\s*"([^"]+)"[^}]*"type":\s*"([^"]+)"',
+        r'"id":\s*\'([^\']+)\'[^}]*"type":\s*\'([^\']+)\'',
+        r'id:\s*"([^"]+)"[^}]*type:\s*"([^"]+)"',
+        r'"([^"]+)"\s*,\s*"([^"]+)"'  # Simple comma-separated pairs
+    ]
     
-    # Extract edges  
-    edge_matches = re.findall(edge_pattern, text)
-    for source, target, edge_type in edge_matches:
-        edges.append({"source": source, "target": target, "type": edge_type})
+    for pattern in node_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            if len(match) == 2:
+                node_id, node_type = match
+                if len(node_id) > 1 and len(node_type) > 1:  # Valid looking
+                    nodes.append({"id": node_id.strip(), "type": node_type.strip()})
     
-    if nodes and edges:
-        manual_graph = {"nodes": nodes, "edges": edges}
-        st.success(f"✅ Manual extraction found {len(nodes)} nodes, {len(edges)} edges")
-        return manual_graph
+    # Pattern 2: Look for edge-like patterns  
+    edge_patterns = [
+        r'"source":\s*"([^"]+)"[^}]*"target":\s*"([^"]+)"[^}]*"type":\s*"([^"]+)"',
+        r'"source":\s*\'([^\']+)\'[^}]*"target":\s*\'([^\']+)\'[^}]*"type":\s*\'([^\']+)\'',
+        r'source:\s*"([^"]+)"[^}]*target:\s*"([^"]+)"[^}]*type:\s*"([^"]+)"'
+    ]
     
-    st.error("❌ Could not extract any valid graph structure")
-    return None
+    for pattern in edge_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            if len(match) == 3:
+                source, target, edge_type = match
+                if all(len(x.strip()) > 1 for x in [source, target, edge_type]):
+                    edges.append({
+                        "source": source.strip(), 
+                        "target": target.strip(), 
+                        "type": edge_type.strip()
+                    })
+    
+    # Remove duplicates
+    unique_nodes = []
+    seen_ids = set()
+    for node in nodes:
+        if node['id'] not in seen_ids:
+            unique_nodes.append(node)
+            seen_ids.add(node['id'])
+    
+    unique_edges = []
+    seen_edges = set()
+    for edge in edges:
+        edge_key = (edge['source'], edge['target'], edge['type'])
+        if edge_key not in seen_edges:
+            unique_edges.append(edge)
+            seen_edges.add(edge_key)
+    
+    st.write(f"**Manual extraction results:**")
+    st.write(f"- Found {len(unique_nodes)} unique nodes")
+    st.write(f"- Found {len(unique_edges)} unique edges")
+    
+    if len(unique_nodes) >= 3 and len(unique_edges) >= 1:
+        result = {"nodes": unique_nodes[:10], "edges": unique_edges[:15]}  # Limit size
+        st.success("✅ Manual extraction successful!")
+        
+        # Show what was extracted
+        st.write("**Extracted Nodes:**")
+        for node in result['nodes'][:5]:
+            st.write(f"- {node['id']} ({node['type']})")
+        
+        st.write("**Extracted Edges:**")  
+        for edge in result['edges'][:5]:
+            st.write(f"- {edge['source']} → {edge['type']} → {edge['target']}")
+        
+        return result
+    else:
+        st.error("❌ Manual extraction found insufficient data")
+        st.write("Trying simple word extraction...")
+        return extract_simple_entities(text)
+
+def extract_simple_entities(text):
+    """Last resort: extract simple entities from any text"""
+    st.write("**🎯 Simple entity extraction as last resort...**")
+    
+    # Look for quoted strings that might be entities
+    quoted_strings = re.findall(r'"([^"]{3,30})"', text)
+    
+    nodes = []
+    edges = []
+    
+    # Create nodes from quoted strings
+    for i, entity in enumerate(quoted_strings[:8]):  # Limit to 8
+        if any(keyword in entity.lower() for keyword in ['system', 'app', 'portal', 'management']):
+            node_type = "Application"
+        elif any(keyword in entity.lower() for keyword in ['database', 'db', 'data']):
+            node_type = "Database"  
+        elif any(keyword in entity.lower() for keyword in ['server', 'host']):
+            node_type = "Server"
+        elif len(entity.split()) == 2 and entity.split()[1].lower() not in ['system', 'database']:
+            node_type = "Person"  # Likely a person name
+        else:
+            node_type = "Component"
+        
+        nodes.append({"id": entity, "type": node_type})
+    
+    # Create simple connections
+    for i in range(len(nodes) - 1):
+        edges.append({
+            "source": nodes[i]['id'],
+            "target": nodes[i + 1]['id'],
+            "type": "CONNECTS_TO"
+        })
+    
+    if len(nodes) >= 3:
+        st.success(f"✅ Simple extraction created {len(nodes)} nodes, {len(edges)} edges")
+        return {"nodes": nodes, "edges": edges}
+    else:
+        st.error("❌ Could not extract any meaningful entities")
+        return None
 
 def validate_graph(graph_data):
     """Validate graph structure"""
