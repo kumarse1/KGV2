@@ -1,129 +1,7 @@
-def extract_json_from_text(text):
-    """Extract JSON from LLM response - ultra-simple approach"""
-    
-    st.write("**🔍 Raw LLM Response (first 500 chars):**")
-    st.code(text[:500])
-    
-    # Skip JSON entirely - just extract entities from text
-    st.write("**🎯 Extracting entities directly from text (no JSON)...**")
-    return extract_entities_from_text(text)
-
-def extract_entities_from_text(text):
-    """Extract entities directly from text without JSON parsing"""
-    
-    # Find all quoted strings (most reliable)
-    quoted_entities = re.findall(r'"([^"]{2,30})"', text)
-    quoted_entities += re.findall(r"'([^']{2,30})'", text)
-    
-    # Find capitalized words (likely entities)
-    capitalized_words = re.findall(r'\b[A-Z][a-zA-Z\s]{2,25}\b', text)
-    
-    # Combine all potential entities
-    all_entities = list(set(quoted_entities + capitalized_words))
-    
-    st.write(f"**Found {len(all_entities)} potential entities:**")
-    for entity in all_entities[:10]:
-        st.write(f"- {entity}")
-    
-    if len(all_entities) < 3:
-        st.warning("Not enough entities found, creating basic demo")
-        return create_minimal_demo_graph()
-    
-    # Create nodes from entities
-    nodes = []
-    for i, entity in enumerate(all_entities[:8]):  # Limit to 8 nodes
-        entity = entity.strip()
-        
-        # Determine type based on keywords
-        if any(word in entity.lower() for word in ['system', 'app', 'portal', 'management']):
-            node_type = "Application"
-        elif any(word in entity.lower() for word in ['database', 'db', 'data']):
-            node_type = "Database"
-        elif any(word in entity.lower() for word in ['server', 'host', 'machine']):
-            node_type = "Server"
-        elif any(word in entity.lower() for word in ['windows', 'linux', 'oracle', 'mysql']):
-            node_type = "Technology"
-        elif len(entity.split()) == 2 and entity.istitle():
-            node_type = "Person"  # Likely a person name
-        else:
-            node_type = "Component"
-        
-        nodes.append({"id": entity, "type": node_type})
-    
-    # Create simple connecting edges
-    edges = []
-    for i in range(len(nodes) - 1):
-        edges.append({
-            "source": nodes[i]['id'],
-            "target": nodes[i + 1]['id'],
-            "type": "CONNECTS_TO"
-        })
-    
-    # Add some management relationships
-    people = [n for n in nodes if n['type'] == 'Person']
-    systems = [n for n in nodes if n['type'] in ['Application', 'Database', 'Server']]
-    
-    for person in people[:2]:  # First 2 people
-        for system in systems[:2]:  # First 2 systems
-            edges.append({
-                "source": person['id'],
-                "target": system['id'],
-                "type": "MANAGES"
-            })
-    
-    result = {"nodes": nodes, "edges": edges}
-    
-    st.success(f"✅ Created graph: {len(nodes)} entities, {len(edges)} relationships")
-    
-    # Show what was created
-    st.write("**Createdef extract_json_from_text(text):
-    """Extract JSON from LLM response - ultra-aggressive approach"""
-    
-    st.write("**🔍 Raw LLM Response (first 500 chars):**")
-    st.code(text[:500])
-    
-    # Ultra-aggressive text cleaning first
-    cleaned_text = ultra_clean_text(text)
-    
-    st.write("**🧹 After ultra-cleaning (first 300 chars):**")
-    st.code(cleaned_text[:300])
-    
-    # Try simple word extraction first (most reliable)
-    simple_result = extract_entities_from_words(cleaned_text)
-    if simple_result:
-        st.success("✅ Simple word extraction worked!")
-        return simple_result
-    
-    # If that fails, try JSON approaches
-    json_patterns = [
-        r'\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\}',
-        r'\{.*?nodes.*?edges.*?\}',
-        r'\{.*?\}',
-    ]
-    
-    for i, pattern in enumerate(json_patterns, 1):
-        try:
-            matches = re.findall(pattern, cleaned_text, re.DOTALL | re.IGNORECASE)
-            for match in matches:
-                st.write(f"**JSON Pattern {i} found:**")
-                st.code(match[:200])
-                
-                fixed_json = ultra_fix_json(match)
-                if fixed_json:
-                    st.success(f"✅ JSON Pattern {i} succeeded!")
-                    return fixed_json
-                    
-        except Exception as e:
-            continue
-    
-    # Final fallback: create from any quoted words
-    st.write("**🎯 Creating graph from any quoted words found...**")
-    return create_graph_from_quotes(cleaned_text)
-
-def ultra_clean_text(text):
-    """Remove everything that could break JSON parsing"""
-    # Remove all control characters and weird whitespace
-    cleaned = re.sub(import streamlit as st
+# =======================
+# 📦 IMPORTS
+# =======================
+import streamlit as st
 import pandas as pd
 import json
 import base64
@@ -144,13 +22,25 @@ LLM_API_URL = "https://your-llm-endpoint.com/v1/chat/completions"
 LLM_USERNAME = "your_username_here"  # Replace with actual username
 LLM_PASSWORD = "your_password_here"  # Replace with actual password
 
+# =======================
+# 🛠️ UTILITY FUNCTIONS
+# =======================
 def get_basic_auth():
     """Create basic auth header"""
     creds = f"{LLM_USERNAME}:{LLM_PASSWORD}"
     return base64.b64encode(creds.encode()).decode()
 
+def validate_graph(graph_data):
+    """Validate graph structure"""
+    return (isinstance(graph_data, dict) and 
+            "nodes" in graph_data and "edges" in graph_data and
+            isinstance(graph_data["nodes"], list) and 
+            isinstance(graph_data["edges"], list) and
+            len(graph_data["nodes"]) >= 3 and
+            len(graph_data["edges"]) >= 2)
+
 # =======================
-# 📄 DATA EXTRACTION
+# 📄 DATA EXTRACTION FUNCTIONS
 # =======================
 def extract_data_from_excel(file):
     """Extract and structure data from Excel file"""
@@ -184,7 +74,7 @@ def extract_data_from_excel(file):
         return None
 
 # =======================
-# 🤖 LLM KNOWLEDGE GRAPH EXTRACTION
+# 🧪 LLM TESTING FUNCTIONS
 # =======================
 def test_llm_connection():
     """Test LLM with a simple request to see what format it expects"""
@@ -265,6 +155,115 @@ def test_llm_connection():
     
     return None, None
 
+# =======================
+# 🎯 ENTITY EXTRACTION FUNCTIONS
+# =======================
+def extract_json_from_text(text):
+    """Extract JSON from LLM response - ultra-simple approach"""
+    
+    st.write("**🔍 Raw LLM Response (first 500 chars):**")
+    st.code(text[:500])
+    
+    # Skip JSON entirely - just extract entities from text
+    st.write("**🎯 Extracting entities directly from text (no JSON)...**")
+    return extract_entities_from_text(text)
+
+def extract_entities_from_text(text):
+    """Extract entities directly from text without JSON parsing"""
+    
+    # Find all quoted strings (most reliable)
+    quoted_entities = re.findall(r'"([^"]{2,30})"', text)
+    quoted_entities += re.findall(r"'([^']{2,30})'", text)
+    
+    # Find capitalized words (likely entities)
+    capitalized_words = re.findall(r'\b[A-Z][a-zA-Z\s]{2,25}\b', text)
+    
+    # Combine all potential entities
+    all_entities = list(set(quoted_entities + capitalized_words))
+    
+    st.write(f"**Found {len(all_entities)} potential entities:**")
+    for entity in all_entities[:10]:
+        st.write(f"- {entity}")
+    
+    if len(all_entities) < 3:
+        st.warning("Not enough entities found, creating basic demo")
+        return create_minimal_demo_graph()
+    
+    # Create nodes from entities
+    nodes = []
+    for i, entity in enumerate(all_entities[:8]):  # Limit to 8 nodes
+        entity = entity.strip()
+        
+        # Determine type based on keywords
+        if any(word in entity.lower() for word in ['system', 'app', 'portal', 'management']):
+            node_type = "Application"
+        elif any(word in entity.lower() for word in ['database', 'db', 'data']):
+            node_type = "Database"
+        elif any(word in entity.lower() for word in ['server', 'host', 'machine']):
+            node_type = "Server"
+        elif any(word in entity.lower() for word in ['windows', 'linux', 'oracle', 'mysql']):
+            node_type = "Technology"
+        elif len(entity.split()) == 2 and entity.istitle():
+            node_type = "Person"  # Likely a person name
+        else:
+            node_type = "Component"
+        
+        nodes.append({"id": entity, "type": node_type})
+    
+    # Create simple connecting edges
+    edges = []
+    for i in range(len(nodes) - 1):
+        edges.append({
+            "source": nodes[i]['id'],
+            "target": nodes[i + 1]['id'],
+            "type": "CONNECTS_TO"
+        })
+    
+    # Add some management relationships
+    people = [n for n in nodes if n['type'] == 'Person']
+    systems = [n for n in nodes if n['type'] in ['Application', 'Database', 'Server']]
+    
+    for person in people[:2]:  # First 2 people
+        for system in systems[:2]:  # First 2 systems
+            edges.append({
+                "source": person['id'],
+                "target": system['id'],
+                "type": "MANAGES"
+            })
+    
+    result = {"nodes": nodes, "edges": edges}
+    
+    st.success(f"✅ Created graph: {len(nodes)} entities, {len(edges)} relationships")
+    
+    # Show what was created
+    st.write("**Created Entities:**")
+    for node in nodes[:5]:
+        st.write(f"- {node['id']} ({node['type']})")
+    
+    return result
+
+def create_minimal_demo_graph():
+    """Create absolute minimal graph when everything else fails"""
+    st.write("**🔧 Creating minimal demo graph...**")
+    
+    nodes = [
+        {"id": "System A", "type": "Application"},
+        {"id": "Database B", "type": "Database"},
+        {"id": "Server C", "type": "Server"},
+        {"id": "Admin User", "type": "Person"}
+    ]
+    
+    edges = [
+        {"source": "System A", "target": "Database B", "type": "USES"},
+        {"source": "System A", "target": "Server C", "type": "RUNS_ON"},
+        {"source": "Admin User", "target": "System A", "type": "MANAGES"}
+    ]
+    
+    return {"nodes": nodes, "edges": edges}
+
+# =======================
+# 🤖 LLM KNOWLEDGE GRAPH FUNCTIONS
+# =======================
 def create_knowledge_graph_with_llm(data_summary):
     """Use LLM to extract knowledge graph - with format testing and simplified prompt"""
     
@@ -481,297 +480,108 @@ def create_basic_fallback_from_data(data_summary):
         st.error("❌ Could not create graph from data")
         return None
 
-def extract_json_from_text(text):
-    """Extract JSON from LLM response - robust JSON fixing"""
-    
-    st.write("**🔍 Raw LLM Response for debugging:**")
-    st.text_area("Full Response", text, height=150)
-    
-    # First try: Look for complete JSON blocks
-    json_patterns = [
-        r'```json\s*(\{.*?\})\s*```',
-        r'```\s*(\{.*?\})\s*```',
-        r'(\{[^{}]*"nodes"[^{}]*"edges"[^{}]*\})',
-        r'(\{.*?"nodes".*?"edges".*?\})'
-    ]
-    
-    for i, pattern in enumerate(json_patterns, 1):
-        try:
-            matches = re.findall(pattern, text, re.DOTALL)
-            for match in matches:
-                st.write(f"**Method {i} found JSON:**")
-                st.code(match[:300] + "..." if len(match) > 300 else match)
-                
-                # Try parsing with aggressive cleanup
-                fixed_json = fix_json_syntax(match)
-                if fixed_json:
-                    st.success(f"✅ Method {i} succeeded after JSON fixing")
-                    return fixed_json
-                    
-        except Exception as e:
-            st.warning(f"Method {i} failed: {e}")
-            continue
-    
-    # Manual extraction as backup
-    st.write("**🛠️ Attempting manual pattern extraction...**")
-    return manual_extract_graph(text)
-
-def fix_json_syntax(json_str):
-    """Aggressively fix common JSON syntax errors"""
-    try:
-        # Start with the original
-        fixed = json_str.strip()
-        
-        # Common fixes
-        fixes_applied = []
-        
-        # 1. Remove trailing commas
-        original_fixed = fixed
-        fixed = re.sub(r',(\s*[}\]])', r'\1', fixed)
-        if fixed != original_fixed:
-            fixes_applied.append("Removed trailing commas")
-        
-        # 2. Fix single quotes to double quotes
-        original_fixed = fixed
-        fixed = re.sub(r"'([^']*)':", r'"\1":', fixed)
-        fixed = re.sub(r":\s*'([^']*)'", r': "\1"', fixed)
-        if fixed != original_fixed:
-            fixes_applied.append("Fixed single quotes")
-        
-        # 3. Fix missing quotes on keys
-        original_fixed = fixed
-        fixed = re.sub(r'(\w+):', r'"\1":', fixed)
-        if fixed != original_fixed:
-            fixes_applied.append("Added quotes to keys")
-        
-        # 4. Fix missing quotes on string values (but not numbers/booleans)
-        original_fixed = fixed
-        fixed = re.sub(r':\s*([a-zA-Z][a-zA-Z0-9\s_-]*)\s*([,}\]])', r': "\1"\2', fixed)
-        if fixed != original_fixed:
-            fixes_applied.append("Added quotes to string values")
-        
-        # 5. Fix double quotes inside strings
-        original_fixed = fixed
-        fixed = re.sub(r'"\s*([^"]*)"([^"]*)"([^"]*)\s*"', r'"\1\2\3"', fixed)
-        if fixed != original_fixed:
-            fixes_applied.append("Fixed nested quotes")
-        
-        # 6. Ensure proper structure
-        if not fixed.startswith('{'):
-            fixed = '{' + fixed
-        if not fixed.endswith('}'):
-            fixed = fixed + '}'
-        
-        st.write(f"**JSON fixes applied:** {', '.join(fixes_applied) if fixes_applied else 'None needed'}")
-        st.code(f"Fixed JSON:\n{fixed[:200]}...")
-        
-        # Try to parse
-        result = json.loads(fixed)
-        
-        if validate_graph(result):
-            return result
-        else:
-            st.warning("Fixed JSON parses but doesn't have valid graph structure")
-            return None
-            
-    except json.JSONDecodeError as e:
-        st.warning(f"JSON still invalid after fixes: {e}")
-        return None
-    except Exception as e:
-        st.warning(f"Error during JSON fixing: {e}")
-        return None
-
-def manual_extract_graph(text):
-    """Extract nodes and edges using regex patterns when JSON parsing fails"""
-    st.write("**🔧 Manual extraction from text patterns...**")
-    
-    nodes = []
-    edges = []
-    
-    # Pattern 1: Look for node-like patterns
-    node_patterns = [
-        r'"id":\s*"([^"]+)"[^}]*"type":\s*"([^"]+)"',
-        r'"id":\s*\'([^\']+)\'[^}]*"type":\s*\'([^\']+)\'',
-        r'id:\s*"([^"]+)"[^}]*type:\s*"([^"]+)"',
-        r'"([^"]+)"\s*,\s*"([^"]+)"'  # Simple comma-separated pairs
-    ]
-    
-    for pattern in node_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        for match in matches:
-            if len(match) == 2:
-                node_id, node_type = match
-                if len(node_id) > 1 and len(node_type) > 1:  # Valid looking
-                    nodes.append({"id": node_id.strip(), "type": node_type.strip()})
-    
-    # Pattern 2: Look for edge-like patterns  
-    edge_patterns = [
-        r'"source":\s*"([^"]+)"[^}]*"target":\s*"([^"]+)"[^}]*"type":\s*"([^"]+)"',
-        r'"source":\s*\'([^\']+)\'[^}]*"target":\s*\'([^\']+)\'[^}]*"type":\s*\'([^\']+)\'',
-        r'source:\s*"([^"]+)"[^}]*target:\s*"([^"]+)"[^}]*type:\s*"([^"]+)"'
-    ]
-    
-    for pattern in edge_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        for match in matches:
-            if len(match) == 3:
-                source, target, edge_type = match
-                if all(len(x.strip()) > 1 for x in [source, target, edge_type]):
-                    edges.append({
-                        "source": source.strip(), 
-                        "target": target.strip(), 
-                        "type": edge_type.strip()
-                    })
-    
-    # Remove duplicates
-    unique_nodes = []
-    seen_ids = set()
-    for node in nodes:
-        if node['id'] not in seen_ids:
-            unique_nodes.append(node)
-            seen_ids.add(node['id'])
-    
-    unique_edges = []
-    seen_edges = set()
-    for edge in edges:
-        edge_key = (edge['source'], edge['target'], edge['type'])
-        if edge_key not in seen_edges:
-            unique_edges.append(edge)
-            seen_edges.add(edge_key)
-    
-    st.write(f"**Manual extraction results:**")
-    st.write(f"- Found {len(unique_nodes)} unique nodes")
-    st.write(f"- Found {len(unique_edges)} unique edges")
-    
-    if len(unique_nodes) >= 3 and len(unique_edges) >= 1:
-        result = {"nodes": unique_nodes[:10], "edges": unique_edges[:15]}  # Limit size
-        st.success("✅ Manual extraction successful!")
-        
-        # Show what was extracted
-        st.write("**Extracted Nodes:**")
-        for node in result['nodes'][:5]:
-            st.write(f"- {node['id']} ({node['type']})")
-        
-        st.write("**Extracted Edges:**")  
-        for edge in result['edges'][:5]:
-            st.write(f"- {edge['source']} → {edge['type']} → {edge['target']}")
-        
-        return result
-    else:
-        st.error("❌ Manual extraction found insufficient data")
-        st.write("Trying simple word extraction...")
-        return extract_simple_entities(text)
-
-def extract_simple_entities(text):
-    """Last resort: extract simple entities from any text"""
-    st.write("**🎯 Simple entity extraction as last resort...**")
-    
-    # Look for quoted strings that might be entities
-    quoted_strings = re.findall(r'"([^"]{3,30})"', text)
-    
-    nodes = []
-    edges = []
-    
-    # Create nodes from quoted strings
-    for i, entity in enumerate(quoted_strings[:8]):  # Limit to 8
-        if any(keyword in entity.lower() for keyword in ['system', 'app', 'portal', 'management']):
-            node_type = "Application"
-        elif any(keyword in entity.lower() for keyword in ['database', 'db', 'data']):
-            node_type = "Database"  
-        elif any(keyword in entity.lower() for keyword in ['server', 'host']):
-            node_type = "Server"
-        elif len(entity.split()) == 2 and entity.split()[1].lower() not in ['system', 'database']:
-            node_type = "Person"  # Likely a person name
-        else:
-            node_type = "Component"
-        
-        nodes.append({"id": entity, "type": node_type})
-    
-    # Create simple connections
-    for i in range(len(nodes) - 1):
-        edges.append({
-            "source": nodes[i]['id'],
-            "target": nodes[i + 1]['id'],
-            "type": "CONNECTS_TO"
-        })
-    
-    if len(nodes) >= 3:
-        st.success(f"✅ Simple extraction created {len(nodes)} nodes, {len(edges)} edges")
-        return {"nodes": nodes, "edges": edges}
-    else:
-        st.error("❌ Could not extract any meaningful entities")
-        return None
-
-def validate_graph(graph_data):
-    """Validate graph structure"""
-    return (isinstance(graph_data, dict) and 
-            "nodes" in graph_data and "edges" in graph_data and
-            isinstance(graph_data["nodes"], list) and 
-            isinstance(graph_data["edges"], list) and
-            len(graph_data["nodes"]) >= 3 and
-            len(graph_data["edges"]) >= 2)
-
 # =======================
-# 🎨 VISUALIZATION
+# 🎨 VISUALIZATION FUNCTIONS
 # =======================
 def create_pyvis_graph(graph_data):
-    """Create interactive pyvis visualization"""
+    """Create interactive pyvis visualization with extra safety"""
     
-    net = Network(
-        height="600px", 
-        width="100%", 
-        directed=True,
-        bgcolor="#f0f0f0"
-    )
+    # Validate data first
+    if not graph_data or 'nodes' not in graph_data or 'edges' not in graph_data:
+        st.error("❌ Invalid graph data structure")
+        return None
     
-    # Color scheme for different node types
-    type_colors = {
-        'Application': '#FF6B6B',
-        'Database': '#4ECDC4', 
-        'Server': '#45B7D1',
-        'Person': '#FFA07A',
-        'Location': '#98D8C8',
-        'Technology': '#DDA0DD',
-        'Component': '#D3D3D3'
-    }
+    nodes = graph_data['nodes']
+    edges = graph_data['edges']
     
-    # Add nodes
-    for node in graph_data['nodes']:
-        node_id = node['id']
-        node_type = node.get('type', 'Component')
-        color = type_colors.get(node_type, '#D3D3D3')
+    if len(nodes) < 2:
+        st.error("❌ Need at least 2 nodes for visualization")
+        return None
+    
+    try:
+        net = Network(
+            height="600px", 
+            width="100%", 
+            directed=True,
+            bgcolor="#f8f9fa"
+        )
         
-        net.add_node(
-            node_id,
-            label=node_id,
-            color=color,
-            title=f"Type: {node_type}",
-            size=25
-        )
-    
-    # Add edges
-    for edge in graph_data['edges']:
-        net.add_edge(
-            edge['source'],
-            edge['target'],
-            label=edge['type'],
-            title=f"{edge['source']} {edge['type']} {edge['target']}"
-        )
-    
-    # Set physics options
-    net.set_options("""
-    var options = {
-      "physics": {
-        "enabled": true,
-        "stabilization": {"iterations": 100}
-      }
-    }
-    """)
-    
-    return net
+        # Color scheme
+        type_colors = {
+            'Application': '#FF6B6B',
+            'Database': '#4ECDC4', 
+            'Server': '#45B7D1',
+            'Person': '#FFA07A',
+            'Location': '#98D8C8',
+            'Technology': '#DDA0DD',
+            'Component': '#D3D3D3'
+        }
+        
+        # Add nodes with validation
+        valid_node_ids = set()
+        for node in nodes:
+            if isinstance(node, dict) and 'id' in node:
+                node_id = str(node['id']).strip()
+                node_type = str(node.get('type', 'Component'))
+                
+                if node_id and len(node_id) > 0:
+                    color = type_colors.get(node_type, '#D3D3D3')
+                    
+                    net.add_node(
+                        node_id,
+                        label=node_id[:20],  # Limit label length
+                        color=color,
+                        title=f"Type: {node_type}",
+                        size=20
+                    )
+                    valid_node_ids.add(node_id)
+        
+        st.write(f"**✅ Added {len(valid_node_ids)} nodes to visualization**")
+        
+        # Add edges with strict validation
+        valid_edges = 0
+        for edge in edges:
+            if isinstance(edge, dict) and 'source' in edge and 'target' in edge:
+                source = str(edge['source']).strip()
+                target = str(edge['target']).strip()
+                edge_type = str(edge.get('type', 'CONNECTS_TO'))
+                
+                if source in valid_node_ids and target in valid_node_ids and source != target:
+                    net.add_edge(
+                        source,
+                        target,
+                        label=edge_type[:15],  # Limit label length
+                        title=f"{source} {edge_type} {target}"
+                    )
+                    valid_edges += 1
+                else:
+                    st.warning(f"⚠️ Skipping invalid edge: {source} → {target}")
+        
+        st.write(f"**✅ Added {valid_edges} edges to visualization**")
+        
+        if valid_edges == 0:
+            st.warning("⚠️ No valid edges found, adding basic connections")
+            # Add basic connections between consecutive nodes
+            node_list = list(valid_node_ids)
+            for i in range(len(node_list) - 1):
+                net.add_edge(node_list[i], node_list[i + 1], label="CONNECTS_TO")
+        
+        # Simple physics
+        net.set_options("""
+        var options = {
+          "physics": {"enabled": true, "stabilization": {"iterations": 50}}
+        }
+        """)
+        
+        return net
+        
+    except Exception as e:
+        st.error(f"❌ Pyvis error: {e}")
+        st.info("💡 Try restarting Streamlit or check pyvis installation")
+        return None
 
 # =======================
-# 🖼️ MAIN UI
+# 🖼️ MAIN APPLICATION
 # =======================
 def main():
     # Header
@@ -851,24 +661,27 @@ def main():
                 # Create pyvis graph
                 net = create_pyvis_graph(graph_data)
                 
-                # Save to temp file and display
-                import uuid
-                temp_file = f"graph_{uuid.uuid4().hex[:8]}.html"
-                temp_path = os.path.join(tempfile.gettempdir(), temp_file)
-                
-                net.save_graph(temp_path)
-                
-                # Read and display
-                with open(temp_path, "r", encoding="utf-8") as f:
-                    html_content = f.read()
-                
-                components.html(html_content, height=650)
-                
-                # Cleanup
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
+                if net:
+                    # Save to temp file and display
+                    import uuid
+                    temp_file = f"graph_{uuid.uuid4().hex[:8]}.html"
+                    temp_path = os.path.join(tempfile.gettempdir(), temp_file)
+                    
+                    net.save_graph(temp_path)
+                    
+                    # Read and display
+                    with open(temp_path, "r", encoding="utf-8") as f:
+                        html_content = f.read()
+                    
+                    components.html(html_content, height=650)
+                    
+                    # Cleanup
+                    try:
+                        os.unlink(temp_path)
+                    except:
+                        pass
+                else:
+                    st.error("❌ Could not create visualization")
                     
             except Exception as e:
                 st.error(f"Visualization error: {e}")
